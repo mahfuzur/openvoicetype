@@ -1,0 +1,182 @@
+import Foundation
+
+/// The dictation pipeline: records in-process (for live levels), then runs the bundled
+/// dictate.sh in two stages, `transcribe <wav>` and `refine` (stdin), so the UI can show each stage.
+final class Dictation {
+    enum State { case idle, starting, recording, transcribing, polishing, testingMic }
+
+    enum Outcome {
+        case text(String, cleanupFailed: Bool, context: DictationContext)
+        case noSpeech
+        case cancelled
+        case failed(String)
+    }
+
+    private(set) var state: State = .idle {
+        didSet { onStateChange?(state) }
+    }
+
+    var onStateChange: ((State) -> Void)?
+    var onLevel: ((Float) -> Void)?
+    var onFinish: ((Outcome) -> Void)?
+    /// Where the text will go, asked when recording stops (the paste target has focus then).
+    var contextProvider: (() -> DictationContext)?
+
+    var refine = true
+    var claudeModel = "haiku"
+    /// nil = system default input.
+    var inputDeviceUID: String?
+    /// The mic used by the current or most recent recording.
+    var deviceName: String { recorder.deviceName }
+
+    private let scriptURL: URL
+    private let recorder = Recorder()
+    private var maxDurationTimer: Timer?
+    private let maxDuration: TimeInterval = 300
+    private let recordingURL = FileManager.default.temporaryDirectory
+        .appendingPathComponent("voice-to-text/app-recording.wav")
+    private let micTestURL = FileManager.default.temporaryDirectory
+        .appendingPathComponent("voice-to-text/mic-test.wav")
+    private var micTestPeak: Float = 0
+
+    init(scriptURL: URL) {
+        self.scriptURL = scriptURL
+        recorder.onLevel = { [weak self] level in
+            guard let self else { return }
+            if self.state == .testingMic { self.micTestPeak = max(self.micTestPeak, level) }
+            self.onLevel?(level)
+        }
+    }
+
+    func toggle() {
+        switch state {
+        case .idle: start()
+        case .starting: cancel()
+        case .recording: stop()
+        case .transcribing, .polishing, .testingMic: break // busy; the overlay already shows progress
+        }
+    }
+
+    func start() {
+        guard state == .idle else { return }
+        state = .starting
+        recorder.start(to: recordingURL, deviceUID: inputDeviceUID, onReady: { [weak self] in
+            guard let self, self.state == .starting else { return }
+            self.state = .recording
+            self.maxDurationTimer = Timer.scheduledTimer(withTimeInterval: self.maxDuration, repeats: false) { [weak self] _ in
+                self?.stop()
+            }
+        }, onFailure: { [weak self] error in
+            guard let self else { return }
+            switch self.state {
+            case .recording:
+                // The mic dropped out mid-dictation: transcribe what was captured so far.
+                self.stop()
+            case .starting:
+                self.maxDurationTimer?.invalidate()
+                self.finish(.failed(error.localizedDescription))
+            default:
+                break
+            }
+        })
+    }
+
+    /// Records for `duration` seconds without transcribing and reports the peak input level (0...1).
+    func testMicrophone(duration: TimeInterval, onReady: @escaping () -> Void,
+                        completion: @escaping (Result<Float, Error>) -> Void) {
+        guard state == .idle else { return }
+        micTestPeak = 0
+        state = .testingMic
+        recorder.start(to: micTestURL, deviceUID: inputDeviceUID, onReady: { [weak self] in
+            onReady()
+            DispatchQueue.main.asyncAfter(deadline: .now() + duration) {
+                guard let self, self.state == .testingMic else { return }
+                self.recorder.cancel()
+                self.state = .idle
+                completion(.success(self.micTestPeak))
+            }
+        }, onFailure: { [weak self] error in
+            self?.recorder.cancel()
+            self?.state = .idle
+            completion(.failure(error))
+        })
+    }
+
+    func stop() {
+        guard state == .recording else { return }
+        maxDurationTimer?.invalidate()
+        guard let wav = recorder.stop() else {
+            finish(.failed("Recording failed"))
+            return
+        }
+
+        let context = contextProvider?() ?? DictationContext.current(override: nil)
+        state = .transcribing
+        run(["transcribe", wav.path]) { [weak self] status, output in
+            guard let self else { return }
+            try? FileManager.default.removeItem(at: wav)
+            let raw = output.trimmingCharacters(in: .whitespacesAndNewlines)
+            guard status == 0 else { return self.finish(.failed("Transcription failed")) }
+            guard !raw.isEmpty else { return self.finish(.noSpeech) }
+
+            // Always run `refine`: with cleanup off or in Raw mode it skips Claude but still applies
+            // the dictionary replacements and output filter.
+            let usesClaude = self.refine && context.mode != .raw
+            if usesClaude { self.state = .polishing }
+            let env = ["VTT_MODE": context.mode.rawValue, "VTT_APP": context.appName]
+            self.run(["refine"], input: raw, extraEnv: env) { status, output in
+                let cleaned = output.trimmingCharacters(in: .whitespacesAndNewlines)
+                let failed = usesClaude && (status != 0 || cleaned.isEmpty)
+                self.finish(.text(cleaned.isEmpty ? raw : cleaned, cleanupFailed: failed, context: context))
+            }
+        }
+    }
+
+    func cancel() {
+        guard state == .starting || state == .recording else { return }
+        maxDurationTimer?.invalidate()
+        recorder.cancel()
+        finish(.cancelled)
+    }
+
+    private func finish(_ outcome: Outcome) {
+        state = .idle
+        onFinish?(outcome)
+    }
+
+    /// Runs the script off the main thread; calls back on main with exit status and stdout.
+    private func run(_ args: [String], input: String? = nil, extraEnv: [String: String] = [:],
+                     completion: @escaping (Int32, String) -> Void) {
+        var env = ProcessInfo.processInfo.environment.merging(extraEnv) { _, new in new }
+        env["VTT_QUIET"] = "on"
+        env["VTT_REFINE"] = refine ? "on" : "off"
+        env["VTT_CLAUDE_MODEL"] = claudeModel
+        let scriptPath = scriptURL.path
+
+        DispatchQueue.global(qos: .userInitiated).async {
+            let process = Process()
+            process.executableURL = URL(fileURLWithPath: "/bin/bash")
+            process.arguments = [scriptPath] + args
+            process.environment = env
+            let stdout = Pipe()
+            let stdin = Pipe()
+            process.standardOutput = stdout
+            process.standardInput = stdin
+            process.standardError = FileHandle.nullDevice
+
+            do {
+                try process.run()
+            } catch {
+                DispatchQueue.main.async { completion(-1, "") }
+                return
+            }
+            if let input { stdin.fileHandleForWriting.write(Data(input.utf8)) }
+            try? stdin.fileHandleForWriting.close()
+
+            let data = stdout.fileHandleForReading.readDataToEndOfFile()
+            process.waitUntilExit()
+            let output = String(decoding: data, as: UTF8.self)
+            DispatchQueue.main.async { completion(process.terminationStatus, output) }
+        }
+    }
+}

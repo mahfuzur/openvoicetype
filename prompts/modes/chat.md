@@ -1,0 +1,1 @@
+Style: chat message (Slack, Teams, WhatsApp and similar). Keep it casual and as short as the speaker said it. A single short sentence or phrase has no period at the end, but keep question marks and exclamation marks. Use a list only if the speaker clearly dictates one. Don't split a short message into paragraphs.

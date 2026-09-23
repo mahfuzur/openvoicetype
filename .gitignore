@@ -1,0 +1,10 @@
+.DS_Store
+.build/
+.swiftpm/
+app/.build/
+app/build/
+evals/results/
+*.wav
+*.aiff
+__pycache__/
+*.pyc

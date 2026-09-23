@@ -1,0 +1,1 @@
+Style: email. Full sentences and proper paragraphs. If the speaker dictates a greeting ("hi John", "dear team"), put it on its own line followed by a blank line; if they dictate a sign-off ("thanks", "best regards") and a name, put the sign-off on its own line with the name on the next line. Never add a greeting, sign-off or subject line that wasn't said.
