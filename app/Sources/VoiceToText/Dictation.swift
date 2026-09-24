@@ -35,18 +35,13 @@ final class Dictation {
     /// Where the text will go, asked when recording stops (the paste target has focus then).
     var contextProvider: (() -> DictationContext)?
 
-    var refine = true
-    var claudeModel = "haiku"
-    /// "claude", or "s1" for S1-mini (offline, through llama-server).
-    var cleanupEngine = "claude"
-    /// Use S1-mini when Claude is unavailable (offline, not logged in, error, timeout).
-    var s1Fallback = true
-    /// nil = system default input.
-    var inputDeviceUID: String?
     /// The mic used by the current or most recent recording.
     var deviceName: String { recorder.deviceName }
 
     private let scriptURL: URL
+    private let settings = AppSettings.shared
+    /// The app's own whisper-server, whisper-cli and llama-server (M4), if this build bundles them.
+    private let helpersURL = Bundle.main.bundleURL.appendingPathComponent("Contents/Helpers")
     private let recorder = Recorder()
     private var maxDurationTimer: Timer?
     private let maxDuration: TimeInterval = 300
@@ -80,7 +75,7 @@ final class Dictation {
         guard state == .idle else { return }
         state = .starting
         prestart()
-        recorder.start(to: recordingURL, deviceUID: inputDeviceUID, onReady: { [weak self] in
+        recorder.start(to: recordingURL, deviceUID: settings.inputDeviceUID, onReady: { [weak self] in
             guard let self, self.state == .starting else { return }
             self.state = .recording
             self.maxDurationTimer = Timer.scheduledTimer(withTimeInterval: self.maxDuration, repeats: false) { [weak self] _ in
@@ -108,7 +103,7 @@ final class Dictation {
         guard state == .idle else { return }
         micTestPeak = 0
         state = .testingMic
-        recorder.start(to: micTestURL, deviceUID: inputDeviceUID, onReady: { [weak self] in
+        recorder.start(to: micTestURL, deviceUID: settings.inputDeviceUID, onReady: { [weak self] in
             onReady()
             DispatchQueue.main.asyncAfter(deadline: .now() + duration) {
                 guard let self, self.state == .testingMic else { return }
@@ -145,8 +140,8 @@ final class Dictation {
 
             // Always run `refine`: with cleanup off or in Raw mode it skips the model but still applies
             // the dictionary replacements and output filter. S1-mini has no code style, so it skips code mode.
-            let usesCleanup = self.refine && context.mode != .raw
-                && !(self.cleanupEngine == "s1" && context.mode == .code)
+            let usesCleanup = self.settings.refine && context.mode != .raw
+                && !(self.settings.cleanupEngine == "s1" && context.mode == .code)
             if usesCleanup { self.state = .polishing }
 
             // Use the `refine` started with recording if it was started for this mode (you may have switched apps).
@@ -190,6 +185,34 @@ final class Dictation {
         run([name] + args) { status, output in completion?(status, output) }
     }
 
+    /// Runs a sample transcript through `refine` like a dictation (Settings → Cleanup → Test). Calls back on main with
+    /// the text, which engine produced it and the time taken.
+    func testCleanup(_ sample: String, completion: @escaping (_ text: String, _ engine: String, _ seconds: Double) -> Void) {
+        let started = Date()
+        run(["refine"], input: sample, extraEnv: ["VTT_MODE": "default", "VTT_APP": "Voice to Text"]) { [weak self] status, output in
+            guard let self else { return }
+            let text = output.trimmingCharacters(in: .whitespacesAndNewlines)
+            let engine: String = switch status {
+            case 0 where !self.settings.refine: "No cleanup (turned off)"
+            case 0: self.settings.cleanupEngine == "s1" ? "S1-mini" : "Claude \(self.settings.claudeModel.capitalized)"
+            case 4: "S1-mini (Claude was unavailable)"
+            default: "Raw text (cleanup failed; see the log)"
+            }
+            completion(text.isEmpty ? sample : text, engine, Date().timeIntervalSince(started))
+        }
+    }
+
+    /// Unloads whisper-server, so the next dictation loads the newly chosen model.
+    func reloadWhisperModel() {
+        server("whisper-server", ["stop"])
+    }
+
+    /// Loads a server once so the bundled build compiles its Metal shaders now (10–20 s the very first time, then
+    /// cached by macOS) instead of during the first dictation. It then stops after idling as usual.
+    func warmUp(_ name: String) {
+        server(name, ["start"]) { [weak self] _, _ in self?.server(name, ["release"]) }
+    }
+
     /// Before the app quits: ends a waiting `refine` and stops both servers (blocks briefly).
     func shutDown() {
         prestartedRefine?.run.terminate()
@@ -212,7 +235,7 @@ final class Dictation {
         server("whisper-server", ["start"])
         dropPrestart()
         let context = contextProvider?() ?? DictationContext.current(override: nil)
-        guard refine, context.mode != .raw,
+        guard settings.refine, context.mode != .raw,
               let run = launch(["refine"], extraEnv: Self.contextEnv(context)) else { return }
         prestartedRefine = (run, context.mode)
     }
@@ -237,10 +260,20 @@ final class Dictation {
     private func environment(_ extra: [String: String] = [:]) -> [String: String] {
         var env = ProcessInfo.processInfo.environment.merging(extra) { _, new in new }
         env["VTT_QUIET"] = "on"
-        env["VTT_REFINE"] = refine ? "on" : "off"
-        env["VTT_CLAUDE_MODEL"] = claudeModel
-        env["VTT_CLEANUP"] = cleanupEngine
-        env["VTT_S1_FALLBACK"] = s1Fallback ? "on" : "off"
+        env["VTT_REFINE"] = settings.refine ? "on" : "off"
+        env["VTT_CLAUDE_MODEL"] = settings.claudeModel
+        env["VTT_CLEANUP"] = settings.cleanupEngine
+        env["VTT_S1_FALLBACK"] = settings.s1Fallback ? "on" : "off"
+        if FileManager.default.fileExists(atPath: helpersURL.path) { env["VTT_BIN_DIR"] = helpersURL.path }
+        if let model = ModelCatalog.whisperModel(named: settings.whisperModel), model.isInstalled {
+            env["VTT_WHISPER_MODEL"] = model.path.path
+        }
+        // The Claude CLI found through the login shell (npm and nvm installs aren't on the app's PATH); an npm
+        // install is a node script that needs its `node` from the same directory.
+        if let claude = ClaudeCLI.shared.path {
+            env["VTT_CLAUDE_BIN"] = claude
+            env["PATH"] = (claude as NSString).deletingLastPathComponent + ":" + (env["PATH"] ?? "/usr/bin:/bin")
+        }
         return env
     }
 

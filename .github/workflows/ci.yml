@@ -21,8 +21,18 @@ jobs:
           python3 -m py_compile evals/run.py
           python3 -c "import json; json.load(open('evals/cases.json'))"
 
+      # The bundled whisper.cpp and llama.cpp builds take a few minutes; they only change with build-deps.sh.
+      - name: Cache the bundled helpers
+        uses: actions/cache@v4
+        with:
+          path: app/build/deps
+          key: deps-${{ runner.os }}-${{ hashFiles('scripts/build-deps.sh') }}
+
       - name: Build the app
-        run: ./scripts/build-app.sh
+        run: |
+          command -v cmake || brew install cmake
+          ./scripts/build-app.sh
+          otool -L app/build/VoiceToText.app/Contents/Helpers/* | grep -v -E '^\S|/usr/lib/|/System/' && exit 1 || true
 
       - name: Render overlay snapshots
         run: |

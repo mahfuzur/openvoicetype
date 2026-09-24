@@ -1,3 +1,4 @@
+import AppKit
 import Carbon
 
 /// A system-wide hotkey via Carbon's RegisterEventHotKey (needs no Accessibility permission).
@@ -5,16 +6,72 @@ import Carbon
 final class HotKey {
     struct Combo: Equatable {
         let keyCode: UInt32
+        /// Carbon modifier flags (cmdKey, optionKey, controlKey, shiftKey).
         let modifiers: UInt32
         let label: String
-    }
 
-    static let presets: [Combo] = [
-        Combo(keyCode: UInt32(kVK_Space), modifiers: UInt32(controlKey | optionKey), label: "⌃⌥Space"),
-        Combo(keyCode: UInt32(kVK_Space), modifiers: UInt32(optionKey), label: "⌥Space"),
-        Combo(keyCode: UInt32(kVK_Space), modifiers: UInt32(cmdKey | shiftKey), label: "⇧⌘Space"),
-        Combo(keyCode: UInt32(kVK_ANSI_D), modifiers: UInt32(controlKey | optionKey), label: "⌃⌥D"),
-    ]
+        static let defaultCombo = Combo(keyCode: UInt32(kVK_Space), modifiers: UInt32(controlKey | optionKey),
+                                        label: "⌃⌥Space")
+
+        /// The combo the Settings window recorded; migrates the older preset menu (`hotKeyIndex`).
+        static func load(from defaults: UserDefaults) -> Combo {
+            if let label = defaults.string(forKey: "hotKeyLabel"), defaults.object(forKey: "hotKeyCode") != nil {
+                return Combo(keyCode: UInt32(defaults.integer(forKey: "hotKeyCode")),
+                             modifiers: UInt32(defaults.integer(forKey: "hotKeyModifiers")), label: label)
+            }
+            let legacy = [
+                defaultCombo,
+                Combo(keyCode: UInt32(kVK_Space), modifiers: UInt32(optionKey), label: "⌥Space"),
+                Combo(keyCode: UInt32(kVK_Space), modifiers: UInt32(cmdKey | shiftKey), label: "⇧⌘Space"),
+                Combo(keyCode: UInt32(kVK_ANSI_D), modifiers: UInt32(controlKey | optionKey), label: "⌃⌥D"),
+            ]
+            return legacy[min(max(defaults.integer(forKey: "hotKeyIndex"), 0), legacy.count - 1)]
+        }
+
+        func save(to defaults: UserDefaults) {
+            defaults.set(Int(keyCode), forKey: "hotKeyCode")
+            defaults.set(Int(modifiers), forKey: "hotKeyModifiers")
+            defaults.set(label, forKey: "hotKeyLabel")
+        }
+
+        /// A combo from a key press in the hotkey recorder, or nil if it can't be a global hotkey
+        /// (a plain letter would stop you typing it; function keys are fine on their own).
+        init?(event: NSEvent) {
+            let flags = event.modifierFlags.intersection([.command, .option, .control, .shift])
+            let code = Int(event.keyCode)
+            let isFunctionKey = Self.functionKeys[code] != nil
+            guard isFunctionKey || flags.contains(.command) || flags.contains(.option) || flags.contains(.control) else {
+                return nil
+            }
+            var carbon = 0
+            var symbols = ""
+            if flags.contains(.control) { carbon |= controlKey; symbols += "⌃" }
+            if flags.contains(.option) { carbon |= optionKey; symbols += "⌥" }
+            if flags.contains(.shift) { carbon |= shiftKey; symbols += "⇧" }
+            if flags.contains(.command) { carbon |= cmdKey; symbols += "⌘" }
+            let key = Self.functionKeys[code] ?? Self.namedKeys[code]
+                ?? (event.charactersIgnoringModifiers ?? "").uppercased()
+            guard !key.isEmpty else { return nil }
+            self.init(keyCode: UInt32(code), modifiers: UInt32(carbon), label: symbols + key)
+        }
+
+        init(keyCode: UInt32, modifiers: UInt32, label: String) {
+            self.keyCode = keyCode
+            self.modifiers = modifiers
+            self.label = label
+        }
+
+        private static let functionKeys: [Int: String] = [
+            kVK_F1: "F1", kVK_F2: "F2", kVK_F3: "F3", kVK_F4: "F4", kVK_F5: "F5", kVK_F6: "F6", kVK_F7: "F7",
+            kVK_F8: "F8", kVK_F9: "F9", kVK_F10: "F10", kVK_F11: "F11", kVK_F12: "F12", kVK_F13: "F13",
+            kVK_F14: "F14", kVK_F15: "F15", kVK_F16: "F16", kVK_F17: "F17", kVK_F18: "F18", kVK_F19: "F19",
+        ]
+        private static let namedKeys: [Int: String] = [
+            kVK_Space: "Space", kVK_Return: "↩", kVK_Tab: "⇥", kVK_Delete: "⌫", kVK_ForwardDelete: "⌦",
+            kVK_LeftArrow: "←", kVK_RightArrow: "→", kVK_UpArrow: "↑", kVK_DownArrow: "↓",
+            kVK_Home: "↖", kVK_End: "↘", kVK_PageUp: "⇞", kVK_PageDown: "⇟",
+        ]
+    }
 
     static let escape = Combo(keyCode: UInt32(kVK_Escape), modifiers: 0, label: "Esc")
 

@@ -8,6 +8,8 @@
     <string>VoiceToText</string>
     <key>CFBundleDisplayName</key>
     <string>Voice to Text</string>
+    <key>CFBundleIconFile</key>
+    <string>AppIcon</string>
     <key>CFBundleExecutable</key>
     <string>VoiceToText</string>
     <key>CFBundlePackageType</key>
@@ -17,7 +19,7 @@
     <key>CFBundleVersion</key>
     <string>1</string>
     <key>LSMinimumSystemVersion</key>
-    <string>13.0</string>
+    <string>13.3</string>
     <key>LSUIElement</key>
     <true/>
     <key>NSHumanReadableCopyright</key>

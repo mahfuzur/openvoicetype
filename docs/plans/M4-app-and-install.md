@@ -28,7 +28,7 @@ Checked on 2026-09-24 against a working install (macOS 15.6, whisper.cpp 1.9.1, 
 | `sox` (self-test) | Homebrew `sox` | Missing | `say --data-format=LEI16@16000` writes the 16 kHz WAV directly |
 | `sox`/`rec` (recording, CLI only) | Homebrew | Missing | Not needed. The app records in Swift. Only the CLI `dictate start` still uses it. |
 | Whisper model (1.6 GB) | `install.sh` | Missing | Downloaded during setup, with progress (§3C) |
-| S1-mini model (484 MB) | `install.sh` | Missing | Downloaded during setup (optional, on by default) |
+| S1-mini model (484 MB) | `install.sh` | Missing | Offered during setup with its own Download button (optional) |
 | `claude` CLI, signed in | The user | Usually missing | Found, or installed with the official installer; sign-in checked with `claude auth status` (§3D) |
 | `bash` 3.2, `perl`, `curl`, `nc`, `route`, `say`, `osascript` | macOS | Present | No change |
 | Microphone and Accessibility permissions | Granted by hand | Not granted | Guided in setup (§3B) |
@@ -76,7 +76,8 @@ so running it again just confirms everything.
    - Found but not signed in → a **Sign In** button (`claude auth login`).
    - Missing → an **Install Claude Code** button that runs Anthropic's official installer visibly in Terminal (the app writes a
      `.command` file and opens it, so no Automation permission is needed), then signs in. A **Check Again** button re-checks.
-   - "Offline cleanup with S1-mini (484 MB)", on by default. If Claude isn't ready yet, S1-mini is selected so dictation works now.
+   - S1-mini (484 MB), offered with its own Download button. If Claude isn't ready yet and S1-mini is installed, it's
+     selected so dictation works now.
 6. **Try it:** shows the hotkey (and lets you change it) and a text box to dictate into. The result shows which engine cleaned it and how long it took.
 
 ### C. Model manager
@@ -140,7 +141,10 @@ Three levels. The release script picks the highest one whose secrets are availab
 | 1. **Release certificate** (the default for now) | A self-signed "Voice to Text Release" certificate, kept as a CI secret, the same way `setup-signing.sh` does locally | Open Anyway, once | **Kept**: the designated requirement is identifier + certificate, which doesn't change between versions (to confirm in spike S2) |
 | 2. Developer ID + notarized | Apple Developer account, hardened runtime, audio-input entitlement, `notarytool` + `stapler` | Double-click, no warning | Kept. Switching from level 1 to 2 changes the certificate, so users grant permissions once more. |
 
-- **DMG:** `hdiutil create -format UDZO` from a folder containing the app and an `Applications` link. That's built into macOS, so no extra tool is needed.
+- **DMG:** built with `dmgbuild` (Python, installed into a virtualenv by `release.sh`): a 660 × 400 window with a background
+  and an arrow, "Voice to Text.app" on the left and an `Applications` link on the right, big icons and no toolbar or sidebar.
+  It writes Finder's `.DS_Store` directly, so it needs no Finder scripting and works in CI (plain `hdiutil` is the fallback).
+  The app icon and the background come from `scripts/make-artwork.swift` (original drawing; SF Symbols can't be used in app icons).
   The release notes and README explain the Open Anyway step with a screenshot while there's no notarization.
 - **Release workflow** (`.github/workflows/release.yml`) on a `v*` tag: build the dependencies (cached), build and sign the app, create the DMG,
   notarize if the Apple secrets exist, and attach the DMG and its SHA-256 to a GitHub Release. CI keeps building on every PR as now.
@@ -163,24 +167,52 @@ These decide parts of the design, so they're done first, like the M3 spike:
 Virtualization framework), with no Homebrew, no `claude` and no models. A second user account on this Mac isn't enough, because it
 still sees `/opt/homebrew`. Paste and the microphone are checked on real hardware.
 
+## 4b. Spike results (2026-09-24)
+
+| ID | Result |
+|---|---|
+| S1 | **Pass.** `build-deps.sh` builds all three in about 2 minutes with Command Line Tools + `cmake`; only system libraries are linked. Speed matches Homebrew: whisper-server 0.81–0.84 s per request, S1-mini 0.08–0.09 s warm, same transcripts and output. **But** the first launch compiles the Metal shaders: 10 s (Whisper) and 19 s (llama.cpp). macOS then caches them (0.3–0.6 s, faster than Homebrew's 0.8–1.1 s), per binary, so every re-signed build pays it once. Handled by warming both servers after a download or an update, and a 30 s start timeout. Two build notes: Homebrew's `ccache` was broken on this Mac (`GGML_CCACHE=OFF`), and Accelerate's BLAS needs macOS 13.3, so the minimum version is now 13.3. The Command Line Tools SDK here is 14.2, which doesn't declare one Metal method ggml uses for multi-GPU events; it isn't used with one GPU, but test on macOS 13/14 (M4.11). |
+| S2 | **Half done.** The self-signed release certificate from CI secrets works: the designated requirement is `identifier "io.github.mahfuzur.voicetotext" and certificate leaf = H"…"`, which doesn't depend on the build, so permission grants should survive updates. Gatekeeper rejects the app (`spctl`: rejected, origin=Voice to Text Release), as expected without notarization. Still to do on a clean Mac: download from GitHub, Open Anyway, and an update keeping the permissions. |
+| S3 | **Decided without a live test:** `claude auth login --claudeai` opens a browser and may ask to paste a code, so it runs in Terminal (a `.command` file). It wasn't run here because it would change this Mac's login. `claude auth status --json` works (`loggedIn`, `subscriptionType`). |
+| S4 | **Pass.** e2e eval, 2 runs each: full 10/12, compressed 10/12, the same failing case (email addresses), with near-identical transcripts ("March 3rd" vs "March 3"). whisper-server 0.84 s either way, **750 MB** of memory instead of 1.7 GB. The compressed model is the default for new users; existing installs keep the full one. |
+
 ## 5. Tasks
 
 | ID | Task | Status |
 |---|---|---|
-| M4.1 | Spikes S1–S4; record the results in §4b | ☐ |
-| M4.2 | `build-deps.sh`: static `whisper-server`, `whisper-cli` and `llama-server` at pinned tags; `build-app.sh` bundles and signs them in `Contents/Helpers`; `VTT_BIN_DIR` first on `PATH` | ☐ |
-| M4.3 | `dictate.sh` without Homebrew: WAV length without `soxi`, `selftest` without `sox`, `CLAUDE_BIN` from the app; shellcheck; eval unchanged | ☐ |
-| M4.4 | `AppSettings` store; `AppDelegate` and `Dictation` read it; migrate the hotkey preset | ☐ |
-| M4.5 | Settings window: General (with the hotkey recorder), Speech, Cleanup (with Test), Dictionary, Modes (app mapping), About | ☐ |
-| M4.6 | `ModelManager`: download with progress, resume and SHA-256; Use and Delete; default to the compressed model (if S4 passes) | ☐ |
-| M4.7 | `ClaudeCLI`: find it, version, `auth status`, Install (official installer in Terminal), Sign In | ☐ |
-| M4.8 | First-run setup: move to Applications, microphone, Accessibility, model, cleanup, try it | ☐ |
-| M4.9 | Short menu; "Update Available" check against GitHub Releases | ☐ |
-| M4.10 | Release: versioning from the tag, DMG, release certificate signing, optional notarization, `release.yml`, third-party licenses | ☐ |
-| M4.11 | Clean-install test in a VM: DMG → Open Anyway → setup → dictation with S1-mini → install Claude → dictation with Claude → update to a new build keeps permissions | ☐ |
-| M4.12 | Docs: README (download and install, Open Anyway, what's downloaded and why), CLAUDE.md, ROADMAP, CHANGELOG, overlay and setup screenshots | ☐ |
+| M4.1 | Spikes S1–S4; record the results in §4b | ◐ S1 and S4 pass; S2 and S3 half done, the rest needs a real download (M4.11). See §4b |
+| M4.2 | `build-deps.sh`: static `whisper-server`, `whisper-cli` and `llama-server` at pinned tags; `build-app.sh` bundles and signs them in `Contents/Helpers`; `VTT_BIN_DIR` first on `PATH` | ☑ DMG 11 MB; helpers 3–18 MB each |
+| M4.3 | `dictate.sh` without Homebrew: WAV length without `soxi`, `selftest` without `sox`, `CLAUDE_BIN` from the app; shellcheck; eval unchanged | ☑ Also: a server restarts when its model changes |
+| M4.4 | `AppSettings` store; `AppDelegate` and `Dictation` read it; migrate the hotkey preset | ☑ |
+| M4.5 | Settings window: General (with the hotkey recorder), Speech, Cleanup (with Test), Dictionary, Modes (app mapping), About | ☑ Vocabulary is in the Dictionary pane (the script already merges dictionary terms into the vocabulary) |
+| M4.6 | `ModelManager`: download with progress, resume and SHA-256; Use and Delete; default to the compressed model (if S4 passes) | ☑ Download, progress and the checksum check tested, and a real download from Settings (Fast model); resume not tested on a real dropped connection |
+| M4.7 | `ClaudeCLI`: find it, version, `auth status`, Install (official installer in Terminal), Sign In | ☑ Found, version and signed-in state tested; Install and Sign In not run (they'd change this Mac's login) |
+| M4.8 | First-run setup: move to Applications, microphone, Accessibility, model, cleanup, try it | ☑ Built and rendered; not yet run on a clean Mac |
+| M4.9 | Short menu; "Update Available" check against GitHub Releases | ☑ |
+| M4.10 | Release: versioning from the tag, DMG, release certificate signing, optional notarization, `release.yml`, third-party licenses | ☑ `release.sh` tested locally with both the local identity and a throwaway release certificate; `release.yml` runs on the first tag |
+| M4.11 | Clean-install test in a VM: DMG → Open Anyway → setup → dictation with S1-mini → install Claude → dictation with Claude → update to a new build keeps permissions | ☐ Needs a clean Mac or VM, and a real download |
+| M4.12 | Docs: README (download and install, Open Anyway, what's downloaded and why), CLAUDE.md, ROADMAP, CHANGELOG, overlay and setup screenshots | ☑ Plus a README logo header and screenshots, and [docs/ARTWORK.md](../ARTWORK.md) |
+| M4.13 | Artwork (added in review): app icon, DMG window, menu-bar icon | ☑ See §5c |
+
+**Checked after building:** shellcheck; clean build with no warnings; `codesign --verify --strict`; `dictate.sh selftest` with only
+the bundled helpers on `PATH` (2.4 s warm); `evals/run.py` 20/20 on Haiku; the installed app starts its bundled servers with the
+chosen model; Settings and setup rendered with `--settings-snapshots`; the model download with a good and a bad checksum.
 
 **Estimate:** about 7–9 days. Build and signing (M4.2, M4.10, M4.11) are about 3 days, the Settings window and store about 2.5, and setup, models and the Claude CLI about 2.5.
+
+## 5c. Added after the first build (review, 2026-09-24)
+
+Trying the first build led to these changes; the design is documented in [docs/ARTWORK.md](../ARTWORK.md).
+
+| Change | Why |
+|---|---|
+| **App icon:** a waveform in the overlay's blue and violet above two lines of text, on a dark rounded square, drawn in code (`scripts/make-artwork.swift`) | The app had macOS's placeholder icon. Original artwork: SF Symbols can't be used in app icons |
+| **DMG window:** background with an arrow, 128 pt icons, no toolbar or sidebar, the app named "Voice to Text.app", the icon on the disk and the `.dmg` file (`dmgbuild`) | A plain `hdiutil` DMG opened as a bare Finder window. dmgbuild writes the layout without Finder scripting, so it works in CI |
+| **Menu-bar icon:** still waveform bars (template, white on a dark menu bar) with a red dot while working | The first version animated the bars with your voice and rippled while processing; it duplicated the overlay and felt busy, so it was simplified |
+| **One install location:** `build-app.sh --install` writes `/Applications/Voice to Text.app`, like the DMG, and removes older copies | Dev builds went to `~/Applications/VoiceToText.app`, so a DMG install left two copies in Launchpad |
+| **Servers restart when their binary changes**, not only their model | After an update or a move, servers from the old copy kept running (even from a deleted copy) and were reused |
+| **Shader warm-up also after a move** (the check includes the app's path) | The Metal shader cache is per location, so moving the app from the DMG to Applications meant a slow first dictation |
+| Downloaded models get normal permissions (0644) | `URLSession` leaves them owner-only (0600), unlike the other model files |
 
 ## 6. Risks
 

@@ -16,13 +16,15 @@
 
 set -euo pipefail
 
-export PATH="/opt/homebrew/bin:/usr/local/bin:$HOME/.local/bin:$PATH"
+# VTT_BIN_DIR: the app's bundled whisper-server, whisper-cli and llama-server, which win over Homebrew's.
+export PATH="${VTT_BIN_DIR:+$VTT_BIN_DIR:}/opt/homebrew/bin:/usr/local/bin:$HOME/.local/bin:$PATH"
 
 CONFIG_FILE="${VTT_CONFIG:-$HOME/.config/voice-to-text/config.sh}"
 # shellcheck source=/dev/null
 [[ -f "$CONFIG_FILE" ]] && source "$CONFIG_FILE"
 
-WHISPER_MODEL="${WHISPER_MODEL:-$HOME/.local/share/whisper/ggml-large-v3-turbo.bin}"
+# VTT_* variables are set by the menu-bar app and take precedence over config.sh.
+WHISPER_MODEL="${VTT_WHISPER_MODEL:-${WHISPER_MODEL:-$HOME/.local/share/whisper/ggml-large-v3-turbo.bin}}"
 # Keep Whisper loaded in a local whisper-server (about 0.9 s per dictation instead of 1.6-2 s with whisper-cli).
 # It starts when recording starts and stops after WHISPER_IDLE_MINUTES unused; whisper-cli is the fallback.
 WHISPER_SERVER="${WHISPER_SERVER:-on}"
@@ -31,14 +33,13 @@ WHISPER_IDLE_MINUTES="${WHISPER_IDLE_MINUTES:-10}"
 WHISPER_SERVER_TIMEOUT="${WHISPER_SERVER_TIMEOUT:-60}"
 LANGUAGE="${LANGUAGE:-en}"
 VOCAB="${VOCAB:-}"
-# VTT_* variables are set by the menu-bar app and take precedence over config.sh.
 CLAUDE_MODEL="${VTT_CLAUDE_MODEL:-${CLAUDE_MODEL:-haiku}}"
 CLAUDE_TIMEOUT="${CLAUDE_TIMEOUT:-15}"
 # Extended thinking made a simple cleanup take 30 s (2,500 thinking tokens for 50 output tokens). Off by default.
 CLAUDE_THINKING_TOKENS="${CLAUDE_THINKING_TOKENS:-0}"
 # Start the claude process before the transcript is ready (see claude_prestart).
 CLAUDE_PRESTART="${CLAUDE_PRESTART:-on}"
-CLAUDE_BIN="${CLAUDE_BIN:-claude}"
+CLAUDE_BIN="${VTT_CLAUDE_BIN:-${CLAUDE_BIN:-claude}}"
 REFINE="${VTT_REFINE:-${REFINE:-on}}"
 REFINE_MIN_WORDS="${REFINE_MIN_WORDS:-4}"
 # Cleanup engine: claude, or s1 (S1-mini by Superwhisper, fully offline through llama.cpp).
@@ -481,8 +482,20 @@ srv_running() {
 srv_healthy() { curl -s --max-time 1 "http://127.0.0.1:$(srv_port "$1")/health" 2>/dev/null | grep -q '"ok"'; }
 
 # Launches the server detached (fd 3, a pre-started Claude's stdin, is not inherited) and records its pid.
+# The binary and model a server runs. A running server with a different one is restarted: the app changed models,
+# or an updated or moved app bundles a new binary (the old server would keep running from the old copy).
+srv_signature() {
+  local model
+  case "$1" in
+    s1-server) model="$S1_MODEL" ;;
+    whisper-server) model="$WHISPER_MODEL" ;;
+  esac
+  printf '%s %s' "$(command -v "$(srv_binary "$1")")" "$model"
+}
+
 srv_launch() {
   local log_file="$LOG_DIR/$1.log"
+  srv_signature "$1" >"$(srv_file "$1" signature)"
   case "$1" in
     s1-server)
       nohup llama-server -m "$S1_MODEL" --host 127.0.0.1 --port "$S1_PORT" --jinja \
@@ -499,13 +512,21 @@ srv_launch() {
 }
 
 # Starts the server unless it is running, and waits until its model is loaded (S1-mini about 1 s, Whisper about 0.6 s).
+# The app's bundled builds compile their Metal shaders on the very first launch (10-20 s, then cached by macOS).
 srv_start() {
-  local name="$1" lock
+  local name="$1" lock deadline pid
   srv_installed "$name" || return 1
   lock="$(srv_file "$name" lock)"
   # A lock, so parallel callers don't start two servers on one port. A lock left by a killed run is stale.
   find "$lock" -maxdepth 0 -mmin +1 -exec rmdir {} \; 2>/dev/null || true
   for _ in $(seq 1 100); do mkdir "$lock" 2>/dev/null && break; sleep 0.1; done
+  if srv_running "$name" && [[ "$(cat "$(srv_file "$name" signature)" 2>/dev/null)" != "$(srv_signature "$name")" ]]; then
+    pid="$(cat "$(srv_file "$name" pid)")"
+    kill "$pid" 2>/dev/null || true
+    log "SERVER $name STOP binary or model changed"
+    for _ in $(seq 1 30); do kill -0 "$pid" 2>/dev/null || break; sleep 0.1; done
+    rm -f "$(srv_file "$name" pid)"
+  fi
   if ! srv_running "$name"; then
     srv_launch "$name"
     log "SERVER $name START pid=$(cat "$(srv_file "$name" pid)")"
@@ -517,12 +538,13 @@ srv_start() {
   fi
   rmdir "$lock" 2>/dev/null || true
   touch "$(srv_file "$name" used)"
-  for _ in $(seq 1 150); do
+  deadline=$(($(now_ms) + 30000))
+  while (($(now_ms) < deadline)); do
     srv_healthy "$name" && return 0
     srv_running "$name" || { log "ERROR $name exited (see $LOG_DIR/$name.log)"; return 1; }
     sleep 0.1
   done
-  log "ERROR $name did not become ready in 15 s"
+  log "ERROR $name did not become ready in 30 s"
   return 1
 }
 
@@ -625,6 +647,29 @@ paste_text() {
   fi
 }
 
+# Prints a WAV's length in seconds from its header (no sox needed; the app has no Homebrew). If the header can't be
+# read, prints MIN_SECONDS so the recording isn't dropped as too short: Whisper then decides whether there's speech.
+wav_seconds() {
+  perl -e '
+    open(my $f, "<:raw", $ARGV[0]) or exit 1;
+    my ($h, $c, $body, $rate) = ("", "", "", 0);
+    read($f, $h, 12) == 12 && substr($h, 0, 4) eq "RIFF" && substr($h, 8, 4) eq "WAVE" or exit 1;
+    while (read($f, $c, 8) == 8) {
+      my ($id, $len) = unpack("a4 V", $c);
+      if ($id eq "data") {
+        my $left = (-s $f) - tell($f);
+        $len = $left if $len == 0 || $len == 0xFFFFFFFF || $len > $left;
+        $rate > 0 or exit 1;
+        printf "%.3f\n", $len / $rate;
+        exit 0;
+      }
+      read($f, $body, $len + ($len % 2)) or exit 1;
+      $rate = unpack("x8 V", $body) if $id eq "fmt ";
+    }
+    exit 1;
+  ' "$1" 2>/dev/null || soxi -D "$1" 2>/dev/null || echo "$MIN_SECONDS"
+}
+
 word_count() { printf '%s' "$1" | wc -w | tr -d ' '; }
 
 # Transcribes a WAV. Sets RAW_TEXT, DURATION and WHISPER_MS; returns 1 if there is no speech.
@@ -633,7 +678,7 @@ transcribe_wav() {
   RAW_TEXT="" DURATION=0 WHISPER_MS=0
 
   [[ -s "$wav" ]] || { log "EMPTY no audio file"; return 1; }
-  DURATION="$(soxi -D "$wav" 2>/dev/null || echo 0)"
+  DURATION="$(wav_seconds "$wav")"
   if perl -e "exit(!($DURATION < $MIN_SECONDS))"; then
     log "SKIP audio too short (${DURATION}s)"
     return 1
@@ -771,10 +816,9 @@ cmd_refine() {
 }
 
 selftest() {
-  local aiff="$STATE_DIR/selftest.aiff" wav="$STATE_DIR/selftest.wav"
-  say -o "$aiff" "Um, so, like, we need to uh deploy the kubernetes cluster to a w s, and then, you know, update the docker image in git hub."
-  sox "$aiff" -r 16000 -c 1 -b 16 "$wav"
-  rm -f "$aiff"
+  local wav="$STATE_DIR/selftest.wav"
+  say --data-format=LEI16@16000 -o "$wav" \
+    "Um, so, like, we need to uh deploy the kubernetes cluster to a w s, and then, you know, update the docker image in git hub."
   run_file "$wav"
   rm -f "$wav"
 }

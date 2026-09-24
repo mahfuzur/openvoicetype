@@ -1,0 +1,47 @@
+name: Release
+
+# Push a tag like v0.2.0 to build the DMG and publish a GitHub Release with it.
+# Signing uses the secrets that exist (see scripts/release.sh): SIGN_P12, SIGN_P12_PASSWORD and SIGN_IDENTITY for the
+# release certificate (scripts/make-release-cert.sh) or a Developer ID; NOTARY_APPLE_ID, NOTARY_TEAM_ID and
+# NOTARY_PASSWORD to notarize a Developer ID build.
+on:
+  push:
+    tags: ["v*"]
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    runs-on: macos-14
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0 # the build number is the commit count
+
+      - name: Cache the bundled helpers
+        uses: actions/cache@v4
+        with:
+          path: app/build/deps
+          key: deps-${{ runner.os }}-${{ hashFiles('scripts/build-deps.sh') }}
+
+      - name: Build and sign the DMG
+        env:
+          SIGN_P12: ${{ secrets.SIGN_P12 }}
+          SIGN_P12_PASSWORD: ${{ secrets.SIGN_P12_PASSWORD }}
+          SIGN_IDENTITY: ${{ secrets.SIGN_IDENTITY }}
+          NOTARY_APPLE_ID: ${{ secrets.NOTARY_APPLE_ID }}
+          NOTARY_TEAM_ID: ${{ secrets.NOTARY_TEAM_ID }}
+          NOTARY_PASSWORD: ${{ secrets.NOTARY_PASSWORD }}
+        run: |
+          command -v cmake || brew install cmake
+          ./scripts/release.sh "$GITHUB_REF_NAME"
+
+      - name: Publish the release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          version="${GITHUB_REF_NAME#v}"
+          gh release create "$GITHUB_REF_NAME" dist/VoiceToText-"$version".dmg dist/VoiceToText-"$version".dmg.sha256 \
+            --title "Voice to Text $version" --generate-notes \
+            --notes "Download the DMG, open it and drag Voice to Text to Applications. See the README for the first launch."

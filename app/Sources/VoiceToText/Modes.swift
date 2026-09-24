@@ -15,10 +15,12 @@ enum DictationMode: String, CaseIterable {
         }
     }
 
-    /// Picks a mode from the app that will receive the text. Browsers stay `default`: we can't
-    /// tell which web app is open.
-    static func forApp(bundleID: String?) -> DictationMode {
-        guard let id = bundleID?.lowercased() else { return .default }
+    /// Picks a mode from the app that will receive the text: the user's own choice (Settings → Modes) first,
+    /// then the built-in list. Browsers stay `default`: we can't tell which web app is open.
+    static func forApp(bundleID: String?, custom: [String: DictationMode] = [:]) -> DictationMode {
+        guard let bundleID else { return .default }
+        if let mode = custom[bundleID] { return mode }
+        let id = bundleID.lowercased()
         if chatApps.contains(id) { return .chat }
         if emailApps.contains(id) { return .email }
         if codeApps.contains(id) || id.hasPrefix("com.jetbrains.") { return .code }
@@ -52,11 +54,11 @@ struct DictationContext {
     let appName: String
     let bundleID: String?
 
-    /// `override` nil means "Auto": choose from the frontmost app.
-    static func current(override: DictationMode?) -> DictationContext {
+    /// `override` nil means "Auto": choose from the frontmost app, using the user's app → mode choices.
+    static func current(override: DictationMode?, custom: [String: DictationMode] = [:]) -> DictationContext {
         let app = NSWorkspace.shared.frontmostApplication
         let bundleID = app?.bundleIdentifier
-        let mode = override ?? DictationMode.forApp(bundleID: bundleID)
+        let mode = override ?? DictationMode.forApp(bundleID: bundleID, custom: custom)
         return DictationContext(mode: mode, appName: app?.localizedName ?? "", bundleID: bundleID)
     }
 }
