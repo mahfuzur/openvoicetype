@@ -400,6 +400,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         if installed {
             menu.addItem(disabled("S1-mini by Superwhisper runs on this Mac:"))
             menu.addItem(disabled("no internet needed, English only."))
+            menu.addItem(disabled("It skips Code mode (editors, terminals): raw text."))
         } else {
             menu.addItem(disabled("Run scripts/install.sh to install S1-mini"))
             menu.addItem(disabled("(offline cleanup, about 500 MB)."))

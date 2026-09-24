@@ -57,7 +57,8 @@ claude -p --model haiku --tools "" --strict-mcp-config --no-session-persistence 
 - S1-mini by Superwhisper (0.6B, `~/.local/share/s1-mini/s1-mini-q4_k_m.gguf`, config `S1_MODEL`) runs in `llama-server`
   (Homebrew `llama.cpp`) on `127.0.0.1:$S1_PORT` (8178). `refine_s1()` in `dictate.sh` posts to `/v1/chat/completions`.
 - `CLEANUP=claude|s1` (`VTT_CLEANUP`). With `claude`, S1-mini is the fallback (`S1_FALLBACK`, `VTT_S1_FALLBACK`) when there's
-  no default route (`VTT_OFFLINE=on` forces it) or Claude fails. Then raw text. Code mode never uses S1-mini.
+  `is_offline()` is true (no default route, or a 1 s TCP connect to `api.anthropic.com:443` fails; skipped behind a proxy,
+  `ONLINE_CHECK=off` disables it, `VTT_OFFLINE=on` forces offline) or Claude fails. Then raw text. Code mode never uses S1-mini.
 - It isn't instruction-following: use its fixed system prompt plus the control line from `s1_control_line()`.
   It needs `--jinja --chat-template-kwargs '{"enable_thinking":false}' --temp 0`. It takes no vocabulary.
 - Server lifecycle: `dictate.sh s1-server start [--keep] | release | stop | status`. The app keeps it loaded (`--keep`) while

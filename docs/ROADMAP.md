@@ -165,9 +165,10 @@ with the eval:
 It takes no vocabulary, so names rely on the Whisper `--prompt` and the dictionary replacements in `post_process`, which still
 runs on S1-mini output.
 
-**Offline check:** `dictate.sh` skips Claude when the Mac has no default route (`route -n get default`, instant), so the app and
-the CLI both go straight to S1-mini instead of waiting for Claude to time out. `VTT_OFFLINE=on` forces it for testing.
-A network without internet access still waits for Claude's timeout, then falls back.
+**Offline check:** `dictate.sh` skips Claude when the Mac has no default route (`route -n get default`, instant) or a TCP
+connect to `api.anthropic.com:443` fails (`nc -z -G 1`, capped at 2 s with DNS; about 20 ms when online). The app and the CLI
+both go straight to S1-mini instead of waiting for Claude to time out. The connect test is skipped behind a proxy, and
+`ONLINE_CHECK=off` turns it off. `VTT_OFFLINE=on` forces offline for testing.
 
 **Work:**
 - [x] `dictate.sh`: `refine_s1()`, `s1-server` commands with an idle watchdog, the fallback chain, and logging (`refine=s1` / `refine=s1-fallback`)
@@ -176,12 +177,24 @@ A network without internet access still waits for Claude's timeout, then falls b
 - [x] Overlay: "Polishing offline" when S1-mini is selected
 - [x] `evals/run.py --cleanup s1`: baseline recorded (below)
 - [x] README: offline mode, privacy note, "S1-mini by Superwhisper" credit; CLAUDE.md pipeline notes
-- [ ] Real test: Wi-Fi off, dictate in the app
+- [ ] Real test: internet off, dictate in the app (first try on 2026-09-24 didn't exercise S1-mini, see the note below)
+- [x] Detect "connected but no internet" quickly (see the note below)
 
 **Eval baseline (2026-09-24):** S1-mini **10/20** (median 1.1 s per case in the parallel eval, about 0.1–0.3 s per call when warm)
 vs Haiku **20/20** (3.8 s). Two failures are code-mode cases S1-mini skips by design. The rest: no vocabulary ("Cloud Code"),
 no context-based fixes of Whisper mishearings ("witness day"), spoken email digits, and one heavy self-correction where it
 dropped items. Good enough as a fallback; Claude stays the default for quality.
+
+> **Note: first real offline test (2026-09-24).** The internet was cut while the Mac stayed on the router's Wi-Fi, and both
+> dictations went into VS Code. Every dictation still pasted, but S1-mini never did the cleanup:
+>
+> - **The offline check missed it.** `route -n get default` only sees whether there's a network, and the router was still
+>   there, so Claude waited the full 15 s timeout, then the raw text was pasted (code mode doesn't fall back to S1-mini).
+>   This "connected but no internet" case is the common one in practice (ISP down, captive portal, dead hotspot).
+>   **Fixed:** before cleanup, a TCP connect to `api.anthropic.com:443` with a 1 s limit (`nc -z -G 1`). In tests, an
+>   unreachable internet now falls back to S1-mini in 0.5–1.3 s end to end, and the check costs about 20 ms when online.
+> - **Code mode never uses S1-mini, by design** (it has no code style), so dictating into VS Code, Xcode or a terminal
+>   always gives the raw text offline. Test in Notes, Slack or Mail. The Cleanup Model menu now says so.
 
 **Done when:** with Wi-Fi off, a dictation is cleaned up by S1-mini and pasted, and the self-test passes with S1-mini selected.
 

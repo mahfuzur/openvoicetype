@@ -26,6 +26,7 @@
 # S1_PORT=8178             # local llama-server port
 # S1_TIMEOUT=10            # seconds before falling back to the raw text
 # S1_IDLE_MINUTES=10       # a server started for a fallback stops after this long unused
+# ONLINE_CHECK="on"        # a 1 s connection test before Claude, so a dead internet line falls back quickly
 
 # Writing style: default | chat | email | code | notes | raw (the app picks it from the focused app)
 # MODE="default"

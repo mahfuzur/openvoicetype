@@ -39,6 +39,10 @@ S1_MODEL="${S1_MODEL:-$HOME/.local/share/s1-mini/s1-mini-q4_k_m.gguf}"
 S1_PORT="${S1_PORT:-8178}"
 S1_TIMEOUT="${S1_TIMEOUT:-10}"
 S1_IDLE_MINUTES="${S1_IDLE_MINUTES:-10}" # a server started for a fallback stops after this long unused
+# Before calling Claude, check the internet is reachable (a 1 s TCP connect), so a dead connection falls back
+# to S1-mini in about a second instead of waiting for CLAUDE_TIMEOUT.
+ONLINE_CHECK="${ONLINE_CHECK:-on}"
+ONLINE_CHECK_HOST="${ONLINE_CHECK_HOST:-api.anthropic.com}"
 PASTE="${PASTE:-on}"
 QUIET="${VTT_QUIET:-off}" # on = no sounds or notifications (the app shows its own)
 RESTORE_CLIPBOARD="${RESTORE_CLIPBOARD:-on}"
@@ -304,10 +308,15 @@ refine() {
   printf '%s' "$out"
 }
 
-# No default route means no network at all; skip Claude instead of waiting for it to time out.
-# (A network without internet access still reaches Claude's timeout, then falls back.)
+# True when Claude can't be reached, so cleanup skips it instead of waiting for it to time out.
+# No default route means no network at all. Otherwise a TCP connect to Claude's API (1 s connect, 2 s including DNS)
+# catches "connected but no internet": ISP down, a captive portal, a dead hotspot. It costs about 20 ms when online.
+# Skipped behind a proxy, where a direct connection can fail although Claude works.
 is_offline() {
-  [[ "${VTT_OFFLINE:-}" == on ]] || ! route -n get default >/dev/null 2>&1
+  [[ "${VTT_OFFLINE:-}" == on ]] && return 0
+  route -n get default >/dev/null 2>&1 || return 0
+  [[ "$ONLINE_CHECK" == on && -z "${HTTPS_PROXY:-}${https_proxy:-}${ALL_PROXY:-}${all_proxy:-}" ]] || return 1
+  ! perl -e 'alarm shift; exec @ARGV or die' 2 nc -z -G 1 "$ONLINE_CHECK_HOST" 443 >/dev/null 2>&1
 }
 
 # --- S1-mini (llama-server) ---
