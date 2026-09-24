@@ -16,7 +16,7 @@ final class DictionaryFile: ObservableObject {
     @Published var replacements: [Replacement] = [] { didSet { save() } }
 
     private static let template = """
-        # Voice to Text dictionary (also edited in Settings → Dictionary)
+        # OpenVoiceType dictionary (also edited in Settings → Dictionary)
         #
         # One name or term per line: Whisper and Claude will spell it exactly like this.
         #   Claude Code

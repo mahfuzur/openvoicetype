@@ -1,4 +1,4 @@
-# Contributing to Voice to Text
+# Contributing to OpenVoiceType
 
 Thanks for helping. Bug reports, prompt improvements, new eval cases and code are all welcome.
 
@@ -20,7 +20,7 @@ the app. Rebuild after changing the script or prompts. `BUNDLE_DEPS=off` skips t
 The app icon, the DMG background and the menu-bar icon are original artwork drawn in code. How they're built, the
 colours, and how to change and regenerate them are in [docs/ARTWORK.md](docs/ARTWORK.md).
 
-Releases: `scripts/release.sh v0.2.0` builds and signs `dist/VoiceToText-0.2.0.dmg`; pushing a `v*` tag does the same
+Releases: `scripts/release.sh v0.2.0` builds and signs `dist/OpenVoiceType-0.2.0.dmg`; pushing a `v*` tag does the same
 in GitHub Actions (`.github/workflows/release.yml`) and publishes it. Signing is described in
 [docs/plans/M4-app-and-install.md](docs/plans/M4-app-and-install.md) §3G.
 
@@ -33,7 +33,8 @@ in GitHub Actions (`.github/workflows/release.yml`) and publishes it. Signing is
 | `app/Sources/ObjCSupport/` | A small Objective-C helper that turns AVFoundation exceptions into Swift errors |
 | `scripts/dictate.sh` | The pipeline: Whisper transcription, Claude cleanup, post-processing. It also works as a standalone CLI |
 | `scripts/build-app.sh`, `build-deps.sh` | Build the app, with self-contained whisper.cpp and llama.cpp inside it |
-| `scripts/release.sh`, `dmg-settings.py`, `make-release-cert.sh` | Build, sign and package the release DMG |
+| `scripts/release.sh`, `dmg-settings.py`, `make-release-cert.sh`, `release-notes.md` | Build, sign and package the release DMG, and its release notes |
+| `scripts/make-demo-gif.sh` | Turns a screen recording into the README demo GIF (see [docs/ARTWORK.md](docs/ARTWORK.md)) |
 | `prompts/` | Cleanup rules (`system.md`) and per-mode style (`modes/*.md`) |
 | `evals/` | The formatting-quality eval: `cases.json` and `run.py` |
 | `docs/` | The roadmap, detailed milestone plans, and [ARTWORK.md](docs/ARTWORK.md) (the icon and installer design) |
@@ -60,6 +61,8 @@ in GitHub Actions (`.github/workflows/release.yml`) and publishes it. Signing is
 Found a dictation that came out wrong? Copy the `raw:` line for it from `~/Library/Logs/voice-to-text/dictate.log`,
 and add a case to `evals/cases.json` with the checks the output should pass (`contains`, `not_contains`, `regex`,
 `min_list_items`, `min_paragraphs`, …). A failing case with a clear expectation is a great first contribution.
+
+Security problems: please report them privately, as described in [SECURITY.md](SECURITY.md).
 
 ## Guidelines
 

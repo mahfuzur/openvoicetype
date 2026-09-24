@@ -1,5 +1,21 @@
 # Changelog
 
+## 0.2.0 (unreleased)
+
+**Voice to Text is now OpenVoiceType.** "Voice to Text" was too generic to find.
+
+- **Coming from 0.1.x:** macOS sees the renamed app as a new app, so it asks for **Microphone** and **Accessibility**
+  once more. Your settings are copied over on the first launch, and it offers to move the old Voice to Text app to the
+  Trash (quitting it first, so the two don't fight over the hotkey). The dictionary, config and logs stay where they were.
+  If the old app opened at login, turn that on again in Settings → General.
+- New bundle ID `io.github.mahfuzur.openvoicetype`, `OpenVoiceType.app`, `OpenVoiceType-<version>.dmg`, and the repo moves
+  to `mahfuzur/openvoicetype` (the old links redirect).
+- [docs/TERMS.md](docs/TERMS.md): how the app uses your own Claude Code, and what Anthropic's terms say about it. Linked from
+  the README, Settings → Cleanup and About. The wording is more careful: "works with your own Claude Code", and your
+  plan's usage limits apply.
+- A security policy, feature-request and pull-request templates, and a script for the README demo GIF.
+- `install.sh` no longer links another app's Whisper model; it downloads its own.
+
 ## 0.1.1 (2026-09-24)
 
 - The Settings window opens at the right size (the first pane was clipped until you switched tabs).

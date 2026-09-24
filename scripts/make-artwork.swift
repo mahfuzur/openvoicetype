@@ -127,7 +127,7 @@ func drawBackground(_ ctx: CGContext, _ scale: CGFloat) {
         ctx.strokePath()
     }
 
-    let caption = "Drag Voice to Text to Applications" as NSString
+    let caption = "Drag OpenVoiceType to Applications" as NSString
     let attributes: [NSAttributedString.Key: Any] = [
         .font: NSFont.systemFont(ofSize: 13, weight: .regular),
         .foregroundColor: NSColor(white: 0.45, alpha: 1),

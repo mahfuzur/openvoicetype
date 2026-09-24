@@ -1,15 +1,15 @@
 <p align="center">
-  <img src="docs/images/app-icon.png" width="128" alt="Voice to Text app icon: a waveform above two lines of text">
+  <img src="docs/images/app-icon.png" width="128" alt="OpenVoiceType app icon: a waveform above two lines of text">
 </p>
 
-<h1 align="center">Voice to Text</h1>
+<h1 align="center">OpenVoiceType</h1>
 
 <p align="center">
-  <strong>Free, open-source dictation for macOS that uses the AI subscription you already have.</strong>
+  <strong>Free, open-source dictation for macOS: on-device Whisper, polished by your own Claude Code.</strong>
 </p>
 
 <p align="center">
-  <a href="https://github.com/mahfuzur/voice-to-text/releases/latest">Download for Mac</a> ·
+  <a href="https://github.com/mahfuzur/openvoicetype/releases/latest">Download for Mac</a> ·
   <a href="#install">Install</a> ·
   <a href="#usage">Usage</a> ·
   <a href="#privacy">Privacy</a> ·
@@ -19,8 +19,12 @@
 Press a hotkey, speak, and press it again. Clean, well-formatted text appears in whatever app you're typing into.
 Speech is transcribed **on your Mac** with [whisper.cpp](https://github.com/ggml-org/whisper.cpp). The polishing step
 (removing filler words, fixing punctuation, formatting numbers, lists and email addresses) runs through your own
-[Claude Code](https://docs.anthropic.com/en/docs/claude-code) CLI, so it uses your existing Claude subscription.
-**No API keys, no word limits, and no extra subscription.**
+[Claude Code](https://docs.anthropic.com/en/docs/claude-code) CLI, signed in with your own Claude account.
+**No API keys, no servers and no extra subscription.** Prefer to keep everything on your Mac? Pick S1-mini for cleanup.
+
+<!-- Demo GIF: record it with scripts/make-demo-gif.sh (see docs/ARTWORK.md), then uncomment:
+<p align="center"><img src="docs/images/demo.gif" width="720" alt="Dictating into Notes: speak, then the polished text is pasted"></p>
+-->
 
 <p align="center">
   <img src="docs/images/overlay-recording.png" width="420" alt="Recording: live waveform and timer">
@@ -52,7 +56,7 @@ Speech is transcribed **on your Mac** with [whisper.cpp](https://github.com/ggml
 ## Screenshots
 
 <p align="center">
-  <img src="docs/images/dmg-window.png" width="560" alt="The installer window: drag Voice to Text to Applications">
+  <img src="docs/images/dmg-window.png" width="560" alt="The installer window: drag OpenVoiceType to Applications">
   <br><em>Install: drag the app to Applications. Setup takes care of the rest.</em>
 </p>
 
@@ -72,15 +76,16 @@ Speech is transcribed **on your Mac** with [whisper.cpp](https://github.com/ggml
 - macOS 13.3 or later on **Apple Silicon**.
 - For cleanup with Claude: a Claude subscription. Setup installs the [Claude Code](https://docs.anthropic.com/en/docs/claude-code)
   CLI for you if it's missing (with Anthropic's official installer) and asks you to sign in.
-  You can also use Voice to Text **without** Claude: S1-mini cleans up on your Mac, or turn cleanup off for the raw transcript.
+  You can also use OpenVoiceType **without** Claude: S1-mini cleans up on your Mac, or turn cleanup off for the raw transcript.
+  How the app uses Claude Code, and what Anthropic's terms say: [docs/TERMS.md](docs/TERMS.md).
 
 ## Install
 
-1. Download `VoiceToText-<version>.dmg` from the [latest release](https://github.com/mahfuzur/voice-to-text/releases/latest),
-   open it, and drag **Voice to Text** to **Applications**.
+1. Download `OpenVoiceType-<version>.dmg` from the [latest release](https://github.com/mahfuzur/openvoicetype/releases/latest),
+   open it, and drag **OpenVoiceType** to **Applications**.
 2. Open it from Applications. The first time, macOS says it can't check the app for malicious software, because the
    app isn't notarized by Apple yet. Click **Done**, then open **System Settings → Privacy & Security**, scroll down and click
-   **Open Anyway** next to "Voice to Text was blocked". You only do this once; updates keep working.
+   **Open Anyway** next to "OpenVoiceType was blocked". You only do this once; updates keep working.
 3. The setup window walks you through the rest:
    - **Microphone** and **Accessibility** (to paste into other apps).
    - **Speech model:** Compressed (574 MB, recommended), Full (1.6 GB) or Fast (148 MB). It downloads while you continue.
@@ -97,8 +102,8 @@ What gets downloaded, and from where: the models come from Hugging Face ([whispe
 You need the Xcode Command Line Tools (`xcode-select --install`; the full Xcode isn't needed) and `cmake`:
 
 ```bash
-git clone https://github.com/mahfuzur/voice-to-text.git
-cd voice-to-text
+git clone https://github.com/mahfuzur/openvoicetype.git
+cd openvoicetype
 
 brew install cmake
 ./scripts/setup-signing.sh         # one time: a local signing identity, so macOS keeps permissions across rebuilds
@@ -192,6 +197,7 @@ hotkey ─► record (AVAudioEngine, 16 kHz WAV)
 - **Audio** is recorded to a temporary file, transcribed on your Mac, and deleted straight away. It is never uploaded.
 - **Transcript text** is sent to Claude through *your* Claude Code CLI, only when cleanup is on and Claude is the selected
   model. With S1-mini selected, nothing leaves your Mac. This project has no servers, telemetry or analytics.
+  The app never reads or stores your Claude login: see [docs/TERMS.md](docs/TERMS.md).
 - **Update check:** once a day the app asks GitHub's public API for the latest release (nothing about you is sent).
   Turn it off in **Settings → About**.
 - **Logs:** `~/Library/Logs/voice-to-text/dictate.log` records timings and, by default, the raw and cleaned text, for
@@ -207,8 +213,9 @@ Settings window, and they win over the config file.
 
 | Problem | Fix |
 |---|---|
-| "Voice to Text can't be opened" / "Apple could not verify" | Expected the first time: **System Settings → Privacy & Security → Open Anyway** (see Install). |
-| The pill says "Copied. Press ⌘V", or Accessibility is switched on but Settings says it's needed | The switch belongs to an older copy with a different signature (turning it off and on doesn't help). **Settings → General → Permissions → Reset…**, then switch Voice to Text on in the list that opens. |
+| "OpenVoiceType can't be opened" / "Apple could not verify" | Expected the first time: **System Settings → Privacy & Security → Open Anyway** (see Install). |
+| Came from **Voice to Text** 0.1.x, and the hotkey or pasting doesn't work | The app was renamed, which macOS treats as a new app. Grant **Microphone** and **Accessibility** again when asked, and quit the old Voice to Text if it's still in the menu bar (the new app offers to move it to the Trash on its first launch). |
+| The pill says "Copied. Press ⌘V", or Accessibility is switched on but Settings says it's needed | The switch belongs to an older copy with a different signature (turning it off and on doesn't help). **Settings → General → Permissions → Reset…**, then switch OpenVoiceType on in the list that opens. |
 | "No speech detected" every time | Microphone access is missing, or the wrong mic is selected. Try **Microphone ▸ Test Microphone…**. |
 | Bluetooth mic says "No audio from …" | Pick the built-in mic under **Microphone**, or reconnect the earbuds. |
 | "Pasted without cleanup" | Claude timed out or isn't signed in, and S1-mini isn't installed. **Settings → Cleanup** shows Claude's status and has a **Test Cleanup** button; download S1-mini there for offline cleanup. |
@@ -234,5 +241,8 @@ and [docs/ROADMAP.md](docs/ROADMAP.md) for what's planned.
 ## License
 
 [MIT](LICENSE). This project is not affiliated with or endorsed by Anthropic or OpenAI. "Claude" and "Claude Code" are
-trademarks of Anthropic. Voice to Text calls the Claude Code CLI that you installed yourself; your use of it is subject to
-[Anthropic's terms](https://www.anthropic.com/legal/consumer-terms).
+trademarks of Anthropic. OpenVoiceType calls the Claude Code CLI that you installed yourself; your use of it is subject to
+[Anthropic's terms](https://www.anthropic.com/legal/consumer-terms), including your plan's usage limits. See
+[docs/TERMS.md](docs/TERMS.md).
+
+OpenVoiceType was called **Voice to Text** up to version 0.1.1.

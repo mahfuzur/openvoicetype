@@ -187,7 +187,7 @@ final class Dictation {
     /// the text, which engine produced it and the time taken.
     func testCleanup(_ sample: String, completion: @escaping (_ text: String, _ engine: String, _ seconds: Double) -> Void) {
         let started = Date()
-        run(["refine"], input: sample, extraEnv: ["VTT_MODE": "default", "VTT_APP": "Voice to Text"]) { [weak self] status, output in
+        run(["refine"], input: sample, extraEnv: ["VTT_MODE": "default", "VTT_APP": "OpenVoiceType"]) { [weak self] status, output in
             guard let self else { return }
             let text = output.trimmingCharacters(in: .whitespacesAndNewlines)
             let engine: String = switch status {

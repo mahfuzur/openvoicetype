@@ -31,7 +31,7 @@ final class SettingsWindowController: NSWindowController {
             tabs.addTabViewItem(item)
         }
         window.contentViewController = tabs
-        window.title = "Voice to Text Settings"
+        window.title = "OpenVoiceType Settings"
     }
 
     required init?(coder: NSCoder) { fatalError("init(coder:) is not used") }
@@ -120,7 +120,7 @@ struct GeneralPane: View {
                 Toggle("Play sounds", isOn: $settings.playSounds)
             }
             Section("Startup") {
-                Toggle("Open Voice to Text when you log in", isOn: Binding(get: { launchAtLogin }, set: setLaunchAtLogin))
+                Toggle("Open OpenVoiceType when you log in", isOn: Binding(get: { launchAtLogin }, set: setLaunchAtLogin))
                 if let loginError { Text(loginError).font(.caption).foregroundColor(.red) }
             }
             Section("Permissions") {
@@ -137,11 +137,11 @@ struct GeneralPane: View {
                 }
                 if !axAllowed {
                     HStack {
-                        Text("Voice to Text is already switched on in the list, but this still says Needed?")
+                        Text("OpenVoiceType is already switched on in the list, but this still says Needed?")
                             .font(.caption).foregroundColor(.secondary)
                         Spacer()
                         Button("Reset…") { Permissions.resetAccessibility() }
-                            .help("Removes the old entry and asks again. Then switch Voice to Text on in the list.")
+                            .help("Removes the old entry and asks again. Then switch OpenVoiceType on in the list.")
                     }
                 }
             }
@@ -230,7 +230,7 @@ struct CleanupPane: View {
             Section {
                 Toggle("Clean up text with AI", isOn: $settings.refine)
                 Picker("Clean up with", selection: $settings.cleanupEngine) {
-                    Text("Claude (your subscription)").tag("claude")
+                    Text("Claude (your Claude Code)").tag("claude")
                     Text("S1-mini (on this Mac, offline)").tag("s1")
                 }
                 .pickerStyle(.radioGroup)
@@ -245,7 +245,13 @@ struct CleanupPane: View {
                     Text("Haiku (fastest)").tag("haiku")
                     Text("Sonnet (smarter, slower)").tag("sonnet")
                 }
-                Text("Only the transcript text is sent to Claude, never your audio.").font(.caption).foregroundColor(.secondary)
+                HStack {
+                    Text("Only the transcript text is sent to Claude, never your audio. Your plan's usage limits apply.")
+                        .font(.caption).foregroundColor(.secondary)
+                    Spacer()
+                    Button("Claude's terms") { NSWorkspace.shared.open(Updater.termsPage) }
+                        .buttonStyle(.link).font(.caption)
+                }
             }
             Section("S1-mini (offline)") {
                 // Not deletable while it's the cleanup engine: every dictation would lose its cleanup.
@@ -435,7 +441,7 @@ struct AboutPane: View {
                 HStack(spacing: 12) {
                     Image(nsImage: NSApp.applicationIconImage).resizable().frame(width: 48, height: 48)
                     VStack(alignment: .leading) {
-                        Text("Voice to Text").font(.headline)
+                        Text("OpenVoiceType").font(.headline)
                         Text("Version \(Updater.currentVersion)").foregroundColor(.secondary)
                     }
                 }
@@ -460,10 +466,13 @@ struct AboutPane: View {
                 Text("Speech recognition: whisper.cpp (MIT). Offline cleanup: S1-mini by Superwhisper, run with llama.cpp (MIT). "
                     + "Cleanup with Claude uses your own Claude Code CLI.")
                     .font(.caption).fixedSize(horizontal: false, vertical: true)
-                Button("Third-Party Licenses") {
-                    if let url = Bundle.main.url(forResource: "ThirdPartyLicenses", withExtension: nil) {
-                        NSWorkspace.shared.open(url)
+                HStack {
+                    Button("Third-Party Licenses") {
+                        if let url = Bundle.main.url(forResource: "ThirdPartyLicenses", withExtension: nil) {
+                            NSWorkspace.shared.open(url)
+                        }
                     }
+                    Button("How OpenVoiceType Uses Claude Code") { NSWorkspace.shared.open(Updater.termsPage) }
                 }
                 .buttonStyle(.link)
             }
@@ -497,7 +506,7 @@ enum Permissions {
     static func resetAccessibility() {
         let process = Process()
         process.executableURL = URL(fileURLWithPath: "/usr/bin/tccutil")
-        process.arguments = ["reset", "Accessibility", Bundle.main.bundleIdentifier ?? "io.github.mahfuzur.voicetotext"]
+        process.arguments = ["reset", "Accessibility", Bundle.main.bundleIdentifier ?? "io.github.mahfuzur.openvoicetype"]
         process.standardOutput = FileHandle.nullDevice
         process.standardError = FileHandle.nullDevice
         try? process.run()

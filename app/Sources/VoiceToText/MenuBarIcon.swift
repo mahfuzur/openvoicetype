@@ -24,7 +24,7 @@ final class MenuBarIcon {
     private func render() {
         guard let button else { return }
         button.image = Self.image(active: isActive)
-        button.setAccessibilityLabel(isActive ? "Voice to Text: working" : "Voice to Text")
+        button.setAccessibilityLabel(isActive ? "OpenVoiceType: working" : "OpenVoiceType")
     }
 
     /// 18 × 18 pt. Busy: the bars with a gap cut around a red dot at the bottom right.

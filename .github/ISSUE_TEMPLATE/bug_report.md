@@ -11,6 +11,7 @@ labels: bug
 **Steps to reproduce**
 
 **Environment**
+- OpenVoiceType version (Settings → About):
 - macOS version:
 - Mac (e.g. M1, M3 Pro):
 - Microphone (built-in, USB, Bluetooth model):

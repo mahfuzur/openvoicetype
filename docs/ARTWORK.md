@@ -64,8 +64,8 @@ The blue and violet are the overlay's colours, so the icon, the overlay and the 
 </p>
 
 - **Window:** 660 × 400 pt, no toolbar, sidebar, status bar or path bar, with icons at 128 pt.
-- **Layout:** "Voice to Text.app" centred at (165, 190), the Applications link at (495, 190), three chevrons fading in from
-  the left between them, and "Drag Voice to Text to Applications" near the bottom.
+- **Layout:** "OpenVoiceType.app" centred at (165, 190), the Applications link at (495, 190), three chevrons fading in from
+  the left between them, and "Drag OpenVoiceType to Applications" near the bottom.
 - **Background:** `#FBFBFA` with dark grey chevrons (25% white at 18 / 40 / 80% opacity) and a grey caption (`#737373`), at
   1x and 2x in one TIFF, so it's sharp on Retina screens.
 - **Disk icon:** the app icon is also the mounted disk's icon (`.VolumeIcon.icns`), so it shows in Finder's sidebar and the
@@ -91,6 +91,23 @@ The blue and violet are the overlay's colours, so the icon, the overlay and the 
   logos), or artwork from other apps. SF Symbols are fine inside the app's interface.
 - **Keep the palette:** blue, violet and the dark background, unless the change is a deliberate redesign discussed in an issue.
 - **The menu-bar icon stays still and monochrome**, with colour only for status.
+
+## Demo GIF
+
+The README's demo (`docs/images/demo.gif`) is a real screen recording, made with
+[`scripts/make-demo-gif.sh`](../scripts/make-demo-gif.sh) (it needs `brew install ffmpeg`).
+
+**What to record** (about 15 s, one take):
+1. A clean window where text is easy to read: Notes or Slack, light mode, a large font, nothing private on screen.
+2. Press the hotkey, and speak one natural sentence with a self-correction and a number, for example: "Um, let's move
+   the team sync to Thursday, no, actually Friday at 3 PM, and invite Sarah from design."
+3. Stop, and let the overlay go through Transcribing and Polishing to Pasted, with the clean text appearing.
+
+**How:**
+- `scripts/make-demo-gif.sh 15 100,100,1200,700` records that region (x, y, width, height in points) after a 3 s countdown.
+  Grant your terminal **Screen Recording** the first time.
+- Or record with ⌘⇧5 (Record Selected Portion), then `scripts/make-demo-gif.sh --from ~/Desktop/Screen\ Recording….mov`.
+- Keep it under 5 MB (`WIDTH=640` or `FPS=10` if it's bigger), then uncomment the demo line near the top of the README.
 
 ## Credits
 

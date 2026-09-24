@@ -3,11 +3,11 @@
 <plist version="1.0">
 <dict>
     <key>CFBundleIdentifier</key>
-    <string>io.github.mahfuzur.voicetotext</string>
+    <string>io.github.mahfuzur.openvoicetype</string>
     <key>CFBundleName</key>
-    <string>VoiceToText</string>
+    <string>OpenVoiceType</string>
     <key>CFBundleDisplayName</key>
-    <string>Voice to Text</string>
+    <string>OpenVoiceType</string>
     <key>CFBundleIconFile</key>
     <string>AppIcon</string>
     <key>CFBundleExecutable</key>
@@ -25,6 +25,6 @@
     <key>NSHumanReadableCopyright</key>
     <string>Copyright © 2026 Mahfuzur Rahman. MIT License.</string>
     <key>NSMicrophoneUsageDescription</key>
-    <string>Voice to Text records your voice while you dictate. Audio is transcribed locally and deleted afterwards.</string>
+    <string>OpenVoiceType records your voice while you dictate. Audio is transcribed locally and deleted afterwards.</string>
 </dict>
 </plist>

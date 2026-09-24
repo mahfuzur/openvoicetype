@@ -17,7 +17,7 @@ final class SetupWindowController: NSWindowController {
         window.contentViewController = host
         window.setContentSize(NSSize(width: 620, height: min(760, available)))
         window.contentMinSize = NSSize(width: 620, height: 420)
-        window.title = "Set Up Voice to Text"
+        window.title = "Set Up OpenVoiceType"
     }
 
     required init?(coder: NSCoder) { fatalError("init(coder:) is not used") }
@@ -53,7 +53,7 @@ struct SetupView: View {
         let first = AppLocation.needsMove ? 2 : 1 // step numbers, after the optional "Move to Applications"
         VStack(alignment: .leading, spacing: 0) {
             VStack(alignment: .leading, spacing: 4) {
-                Text("Welcome to Voice to Text").font(.title2).fontWeight(.semibold)
+                Text("Welcome to OpenVoiceType").font(.title2).fontWeight(.semibold)
                 Text("Press a hotkey, speak, and clean text appears where you type. A few steps and you're ready.")
                     .foregroundColor(.secondary)
             }
@@ -83,7 +83,7 @@ struct SetupView: View {
                     }
                 }
                 step(first + 1, "Accessibility", done: axAllowed,
-                     detail: "To paste the text into the app you're using. Turn on Voice to Text in the list that opens.") {
+                     detail: "To paste the text into the app you're using. Turn on OpenVoiceType in the list that opens.") {
                     if !axAllowed {
                         Button("Open System Settings") {
                             Permissions.promptAccessibility()
@@ -110,7 +110,7 @@ struct SetupView: View {
                 }
                 Section {
                     stepHeader(first + 3, "Cleanup", done: claude.isReady || ModelCatalog.s1Mini.isInstalled,
-                               detail: "AI removes filler words and fixes punctuation. Claude uses your own subscription; "
+                               detail: "AI removes filler words and fixes punctuation. Claude runs through your own Claude Code; "
                                    + "S1-mini works offline. You can have both: S1-mini steps in when Claude can't.")
                     ClaudeStatusView()
                     ModelRow(model: ModelCatalog.s1Mini, allowDelete: false)
@@ -226,7 +226,7 @@ enum AppLocation {
                     NSApp.terminate(nil)
                 } else {
                     failed("Copied to Applications, but it didn't open (\(error?.localizedDescription ?? "unknown error")). "
-                        + "Quit this copy and open Voice to Text from Applications.")
+                        + "Quit this copy and open OpenVoiceType from Applications.")
                 }
             }
         }

@@ -7,6 +7,7 @@
 # a new certificate means every user grants permissions again.
 set -euo pipefail
 
+# The certificate keeps the project's old name on purpose: renaming it would change the CI secrets (M5 plan §1).
 IDENTITY="Voice to Text Release"
 OUT="${1:-$HOME/.config/voice-to-text/release-cert}"
 

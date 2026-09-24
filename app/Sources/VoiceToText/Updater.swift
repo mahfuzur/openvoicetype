@@ -4,7 +4,9 @@ import AppKit
 /// request to the public API. Updating is downloading the new DMG and replacing the app (Sparkle can come later).
 final class Updater: ObservableObject {
     static let shared = Updater()
-    static let repository = "mahfuzur/voice-to-text"
+    static let repository = "mahfuzur/openvoicetype"
+    /// docs/TERMS.md: how the app uses Claude Code, and what Anthropic's terms say about it.
+    static let termsPage = URL(string: "https://github.com/\(repository)/blob/master/docs/TERMS.md")!
 
     struct Release: Equatable {
         let version: String

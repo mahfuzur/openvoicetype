@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Builds a release DMG: scripts/release.sh v0.2.0 -> dist/VoiceToText-0.2.0.dmg (+ .sha256).
+# Builds a release DMG: scripts/release.sh v0.2.0 -> dist/OpenVoiceType-0.2.0.dmg (+ .sha256).
 #
 # Signing uses the highest level whose secrets are set (see docs/plans/M4-app-and-install.md §3G):
 #   SIGN_P12 (base64 .p12), SIGN_P12_PASSWORD, SIGN_IDENTITY (its certificate name):
@@ -17,7 +17,7 @@ VERSION="${VERSION#v}"
 REPO_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 DIST="$REPO_DIR/dist"
 APP="$REPO_DIR/app/build/VoiceToText.app"
-DMG="$DIST/VoiceToText-$VERSION.dmg"
+DMG="$DIST/OpenVoiceType-$VERSION.dmg"
 WORK="$(mktemp -d)"
 KEYCHAIN=""
 SEARCH_LIST=()
@@ -64,13 +64,13 @@ VENV="$REPO_DIR/app/build/dmgbuild-venv"
 if [[ -x "$VENV/bin/dmgbuild" ]] || { python3 -m venv "$VENV" && "$VENV/bin/pip" install -q --disable-pip-version-check "dmgbuild==1.6.7"; }; then
   "$VENV/bin/dmgbuild" -s "$REPO_DIR/scripts/dmg-settings.py" -D app="$APP" \
     -D background="$REPO_DIR/app/Resources/dmg-background.tiff" -D icon="$REPO_DIR/app/Resources/AppIcon.icns" \
-    "Voice to Text" "$DMG" >/dev/null
+    "OpenVoiceType" "$DMG" >/dev/null
 else
   echo "warning: couldn't install dmgbuild; building a plain DMG without the window layout" >&2
   mkdir -p "$WORK/dmg"
-  cp -R "$APP" "$WORK/dmg/"
+  cp -R "$APP" "$WORK/dmg/OpenVoiceType.app"
   ln -s /Applications "$WORK/dmg/Applications"
-  hdiutil create -quiet -volname "Voice to Text" -srcfolder "$WORK/dmg" -ov -format UDZO "$DMG"
+  hdiutil create -quiet -volname "OpenVoiceType" -srcfolder "$WORK/dmg" -ov -format UDZO "$DMG"
 fi
 
 if [[ "${SIGN_IDENTITY:-}" == "Developer ID"* ]]; then

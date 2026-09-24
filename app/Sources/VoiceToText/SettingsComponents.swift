@@ -139,7 +139,7 @@ struct ClaudeStatusView: View {
     private var detail: String {
         switch claude.status {
         case .checking: "Checking your installed tools."
-        case .missing: "Cleanup uses your own Claude subscription through the Claude Code CLI, with no API key. "
+        case .missing: "Cleanup runs your own Claude Code CLI, signed in with your Claude account. No API key. "
             + "Installing runs Anthropic's official installer in Terminal."
         case .signedOut(let path, let version): "\(path) (\(version)). Sign in with your Claude account in Terminal."
         case .ready(let path, let version, _): "\(path), version \(version)"
