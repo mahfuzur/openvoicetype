@@ -14,7 +14,7 @@ struct ModelFile: Identifiable, Equatable {
 
     var id: String { fileName }
     var path: URL { directory.appendingPathComponent(fileName) }
-    /// A symlink to a copy elsewhere (install.sh links Superwhisper's model) counts as installed.
+    /// A symlink to a copy elsewhere (older install.sh versions linked another app's model) counts as installed.
     var isInstalled: Bool { FileManager.default.fileExists(atPath: path.path) }
     var sizeLabel: String { ByteCountFormatter.string(fromByteCount: bytes, countStyle: .file) }
 }

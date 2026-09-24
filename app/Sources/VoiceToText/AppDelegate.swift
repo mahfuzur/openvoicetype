@@ -97,6 +97,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
             runOverlayDemo()
             return
         }
+        // Before the hotkey: a running old "Voice to Text" would own it until it's quit.
+        Migration.offerToRemoveOldApp()
         registerHotKey()
         observeSettings()
         claude.refresh()
@@ -428,7 +430,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         menu.addItem(item("Settings…", #selector(openSettingsWindow), key: ","))
         menu.addItem(item("Set Up…", #selector(openSetup)))
         menu.addItem(.separator())
-        menu.addItem(item("Quit Voice to Text", #selector(quit), key: "q"))
+        menu.addItem(item("Quit OpenVoiceType", #selector(quit), key: "q"))
     }
 
     private func cleanupMenuItem() -> NSMenuItem {
@@ -610,13 +612,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         let escaped = message.replacingOccurrences(of: "\"", with: "\\\"")
         let process = Process()
         process.executableURL = URL(fileURLWithPath: "/usr/bin/osascript")
-        process.arguments = ["-e", "display notification \"\(escaped)\" with title \"Voice to Text\""]
+        process.arguments = ["-e", "display notification \"\(escaped)\" with title \"OpenVoiceType\""]
         try? process.run()
     }
 
     private func fatalAlert(_ message: String) {
         let alert = NSAlert()
-        alert.messageText = "Voice to Text"
+        alert.messageText = "OpenVoiceType"
         alert.informativeText = message
         alert.runModal()
         NSApp.terminate(nil)

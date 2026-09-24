@@ -1,4 +1,4 @@
-# Voice to Text
+# OpenVoiceType
 
 An open-source, local-first dictation app for macOS (Apple Silicon). Speech goes in, and polished text is pasted into the focused app.
 Whisper (whisper.cpp) transcribes on-device. The cleanup step calls the user's own logged-in `claude` CLI in print mode,
@@ -122,7 +122,7 @@ claude -p --model haiku --tools "" --strict-mcp-config --no-session-persistence 
 - **Gotcha (downloads):** a downloaded DMG quarantines every file in it. Open Anyway approves the app, not the helpers
   it launches: a quarantined helper hangs in Gatekeeper's check, so transcription would never start. The app can't clear the
   flag inside its own bundle (App Management protects signed apps: `xattr -d` gets "Operation not permitted"), so
-  `BundledHelpers` writes byte copies to `~/Library/Application Support/Voice to Text/Helpers` at launch (only when they
+  `BundledHelpers` writes byte copies to `~/Library/Application Support/OpenVoiceType/Helpers` at launch (only when they
   changed; the copies keep their signature and aren't quarantined) and runs them from there. Test it by setting
   `com.apple.quarantine` on a copy of the DMG. Commands run in Claude Code's sandbox mark every file they write as
   quarantined, so run such tests outside the sandbox.
@@ -145,16 +145,34 @@ claude -p --model haiku --tools "" --strict-mcp-config --no-session-persistence 
   `--keychain`; `release.sh` adds its temporary keychain and restores the list on exit. Don't restore a search list in zsh with
   an unquoted variable: zsh doesn't word-split it, and the list becomes one bogus entry.
 
+## Name and migration (M5, see docs/plans/M5-open-source-release.md)
+
+- The app was called **Voice to Text** (bundle ID `io.github.mahfuzur.voicetotext`) up to v0.1.1. It's now **OpenVoiceType**
+  (`io.github.mahfuzur.openvoicetype`, `/Applications/OpenVoiceType.app`, `OpenVoiceType-<version>.dmg`, repo
+  `mahfuzur/openvoicetype`).
+- Deliberately **unchanged**: `~/.config/voice-to-text`, `~/Library/Logs/voice-to-text`, `$TMPDIR/voice-to-text`, the `dictate`
+  command, the SwiftPM target and executable `VoiceToText` (so `app/build/VoiceToText.app`), the `VTT_*` variables, and
+  the signing certificates "Voice to Text Local Signing" / "Voice to Text Release" (renaming them would change the CI secrets).
+- `Migration.swift`: `copySettings()` runs in `main.swift` before `AppSettings` loads and copies the old preferences domain
+  once. `offerToRemoveOldApp()` runs before the hotkey is registered: it quits a running old app (both would want the same
+  hotkey), trashes it, and resets its Accessibility entry. It only looks in /Applications and ~/Applications, never in build folders.
+- A new bundle ID means Microphone and Accessibility must be granted again, once. Test the migration on a copy, never on
+  the maintainer's installed app.
+- Claude's terms: [docs/TERMS.md](docs/TERMS.md) (linked from README, About, Cleanup). Don't market "no limits" or
+  "uses your subscription for free"; say "works with your own Claude Code".
+- `scripts/make-demo-gif.sh` makes `docs/images/demo.gif` (screen recording + ffmpeg); `scripts/release-notes.md` is the
+  release body (`<version>` is filled in by `release.yml`).
+
 ## Commands
 
 - `./scripts/install.sh`: links `~/.local/bin/dictate`, creates the config, links the model, runs the self-test.
 - `./scripts/dictate.sh selftest`: runs speech synthesized with `say` through Whisper and Claude, with no mic or paste. Run it after any pipeline change.
 - `./scripts/dictate.sh file <wav>`: processes an existing recording and prints the raw text, cleaned text and timings.
 - `./scripts/build-app.sh [--install]`: builds `app/` with SwiftPM into `app/build/VoiceToText.app`,
-  bundling `scripts/dictate.sh`, `prompts/` and the helpers into it. `--install` copies it to `/Applications/Voice to Text.app` (the same name and place as the DMG, so there is one copy) and relaunches it.
+  bundling `scripts/dictate.sh`, `prompts/` and the helpers into it. `--install` copies it to `/Applications/OpenVoiceType.app` (the same name and place as the DMG, so there is one copy) and relaunches it.
   Rebuild after changing `dictate.sh`, because the app runs its bundled copy. `VERSION=`, `BUNDLE_DEPS=off`, `SIGN_IDENTITY=`.
-- `./scripts/release.sh v0.2.0`: builds, signs and packages `dist/VoiceToText-0.2.0.dmg` (+ `.sha256`), with the window
-  layout from `scripts/dmg-settings.py` (dmgbuild; the app is named "Voice to Text.app" in the DMG). A pushed `v*` tag runs
+- `./scripts/release.sh v0.2.0`: builds, signs and packages `dist/OpenVoiceType-0.2.0.dmg` (+ `.sha256`), with the window
+  layout from `scripts/dmg-settings.py` (dmgbuild; the app is named "OpenVoiceType.app" in the DMG). A pushed `v*` tag runs
   it in `.github/workflows/release.yml` and publishes a GitHub Release.
 - Artwork (see docs/ARTWORK.md): `swiftc -o /tmp/make-artwork scripts/make-artwork.swift && /tmp/make-artwork` writes
   `app/Resources/AppIcon.icns`, `app/Resources/dmg-background.tiff` and `docs/images/app-icon.png`. Never use SF Symbols in
@@ -234,9 +252,9 @@ The menu-bar app (`app/Sources/VoiceToText/`) records in-process and runs `dicta
   `scripts/setup-signing.sh` creates the self-signed identity "Voice to Text Local Signing" in a dedicated keychain
   (`~/Library/Keychains/voice-to-text-signing.keychain-db`, password in `~/.config/voice-to-text/signing-keychain-password`).
   `build-app.sh` uses it automatically, so the designated requirement is `identifier + certificate leaf`, which stays the same across rebuilds.
-  Check it with `codesign -d -r- "/Applications/Voice to Text.app"`.
+  Check it with `codesign -d -r- "/Applications/OpenVoiceType.app"`.
   **Gotcha:** a grant made for one signature shows as "on" for a copy with another signature, but doesn't apply, and
-  toggling it doesn't help. `tccutil reset Accessibility io.github.mahfuzur.voicetotext` (no sudo) removes it; the app's
+  toggling it doesn't help. `tccutil reset Accessibility io.github.mahfuzur.openvoicetype` (no sudo) removes it; the app's
   **Reset…** button (Settings → General, and setup) does that and asks again. A maintainer's `setup-signing.sh` imports the
   release certificate (`~/.config/voice-to-text/release-cert/`), and `build-app.sh` then signs local builds as
   "Voice to Text Release", so local builds and downloaded releases keep the same grants.

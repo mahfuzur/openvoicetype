@@ -1,4 +1,6 @@
-# Roadmap: Voice to Text
+# Roadmap: OpenVoiceType
+
+*Called Voice to Text up to v0.1.1 (renamed in M5).*
 
 **Goal:** a free, open-source macOS dictation app. Press a hotkey, speak, and well-formatted text appears in
 the focused app. Whisper runs locally, and cleanup is done by **the AI subscription the user already pays for**,
@@ -46,7 +48,7 @@ post-processing, rich paste, and the eval harness (`evals/`). Eval: 30% → **10
 | M2.5 | Offline cleanup with S1-mini | 1–2 days | ✅ Done (2026-09-24) | Works with no internet; a fully on-device option |
 | M3 | Native pipeline and speed | 3–4 days | ✅ Done (2026-09-24): about 2× faster; ≤ 3 s for short dictations | Around 2–3 s total, needed before a public release |
 | M4 | Settings window, first-run setup and DMG | 7–9 days | ✅ Released as v0.1.0 (2026-09-24); a test on a second Mac is still to do ([plan](plans/M4-app-and-install.md)) | Anyone can install it from a DMG with no Homebrew or Terminal, and set it up in a real window |
-| M5 | Open-source release | 2–3 days | Partly done (license, CI, docs) | Name, terms check, demo, the first tagged DMG |
+| M5 | Open-source release | 2–3 days | ◐ Built on the `m5-release` branch (2026-09-24): renamed to **OpenVoiceType**, terms check, demo GIF script, community files. Left for the maintainer: record the GIF, rename the repo, tag v0.2.0 ([plan](plans/M5-open-source-release.md)) | Name, terms check, demo, the first tagged DMG |
 | M6 | More providers | 3–4 days | Not started | Turns it into a platform: pick Codex, Gemini, Ollama or an API as well as Claude and S1-mini |
 
 M3 matters most for adoption: people don't keep using a slow dictation tool.
@@ -252,6 +254,9 @@ Installed CLIs are detected automatically by resolving the user's login-shell `P
 
 ## M5: Open-source release
 
+> **Detailed plan and task tracking:** [plans/M5-open-source-release.md](plans/M5-open-source-release.md).
+> Decided on 2026-09-24: the new name is **OpenVoiceType**; Claude's terms are disclosed in `docs/TERMS.md` and the wording is softer.
+
 - **Name and IDs:** choose a unique name ("Voice to Text" is too generic to find) and check GitHub, the App Store and trademarks.
   Use the bundle ID `io.github.<user>.<name>`, and remove personal paths, e-mail addresses and the Superwhisper model path.
 - **License:** MIT (my recommendation, the most permissive) or GPL-3 (like VoiceInk). Don't copy code from GPL projects into an MIT repo.
@@ -292,7 +297,8 @@ These are the two features, from comparing with Wispr Flow and Typeless, that ar
 ## Decisions
 
 1. ~~Overlay style~~: a bottom-centre pill (done in M1).
-2. ~~Name and license~~: **Voice to Text**, **MIT**, bundle ID `io.github.mahfuzur.voicetotext`.
+2. ~~Name and license~~: **MIT**. The name was **Voice to Text** (`io.github.mahfuzur.voicetotext`) until M5 renamed it to
+   **OpenVoiceType** (`io.github.mahfuzur.openvoicetype`) on 2026-09-24: the old name was too generic to find.
 3. **Apple Developer account** ($99 a year) for signed and notarized releases: still open. Until then, releases are built from source.
 4. ~~Offline cleanup~~: **S1-mini** through llama.cpp. Claude stays the default; S1-mini is the automatic fallback and a selectable option (2026-09-24).
 
@@ -302,4 +308,6 @@ M3 is done (see [plans/M3-speed.md](plans/M3-speed.md)): about twice as fast. Re
 3.5–5.7 s (17–22 s of speech), from 6–9 s before; S1-mini takes about 1.5 s. What's left is Claude generating the text; the
 plan lists ideas for later. M4 is done and **v0.1.0 is released** (2026-09-24): a self-contained app and DMG, first-run setup, a Settings window, the
 release workflow, and the artwork ([plans/M4-app-and-install.md](plans/M4-app-and-install.md)). Next: install the published DMG
-on a second Mac without Homebrew or Claude, then the rest of M5 (demo GIF, terms check) or M6 (more providers).
+on a second Mac without Homebrew or Claude. M5 is built on the `m5-release` branch: after review, the maintainer records the
+demo GIF, renames the repo and tags v0.2.0 (the steps are in [plans/M5-open-source-release.md](plans/M5-open-source-release.md) §7).
+Then M6 (more providers).

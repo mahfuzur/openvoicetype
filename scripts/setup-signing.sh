@@ -7,6 +7,7 @@
 #   security delete-keychain ~/Library/Keychains/voice-to-text-signing.keychain-db
 set -euo pipefail
 
+# The certificate keeps the project's old name on purpose: renaming it would change the CI secrets (M5 plan §1).
 IDENTITY="Voice to Text Local Signing"
 KEYCHAIN="$HOME/Library/Keychains/voice-to-text-signing.keychain-db"
 PASS_FILE="$HOME/.config/voice-to-text/signing-keychain-password"

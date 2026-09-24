@@ -41,5 +41,5 @@ jobs:
 
       - uses: actions/upload-artifact@v4
         with:
-          name: VoiceToText-app
+          name: OpenVoiceType-app
           path: app/build/VoiceToText.app

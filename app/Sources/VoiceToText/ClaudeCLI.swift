@@ -74,7 +74,7 @@ final class ClaudeCLI: ObservableObject {
             clear
             \(body)
             echo
-            echo "Done. You can close this window and go back to Voice to Text."
+            echo "Done. You can close this window and go back to OpenVoiceType."
 
             """
         do {

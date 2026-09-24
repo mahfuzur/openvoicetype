@@ -42,6 +42,7 @@ jobs:
           GH_TOKEN: ${{ github.token }}
         run: |
           version="${GITHUB_REF_NAME#v}"
-          gh release create "$GITHUB_REF_NAME" dist/VoiceToText-"$version".dmg dist/VoiceToText-"$version".dmg.sha256 \
-            --title "Voice to Text $version" --generate-notes \
-            --notes "Download the DMG, open it and drag Voice to Text to Applications. See the README for the first launch."
+          sed "s/<version>/$version/g" scripts/release-notes.md >"$RUNNER_TEMP/notes.md"
+          gh release create "$GITHUB_REF_NAME" dist/OpenVoiceType-"$version".dmg dist/OpenVoiceType-"$version".dmg.sha256 \
+            --title "OpenVoiceType $version" --generate-notes \
+            --notes-file "$RUNNER_TEMP/notes.md"

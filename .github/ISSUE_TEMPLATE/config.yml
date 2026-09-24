@@ -1,0 +1,8 @@
+blank_issues_enabled: true
+contact_links:
+  - name: Troubleshooting
+    url: https://github.com/mahfuzur/openvoicetype#troubleshooting
+    about: Permissions, "No speech detected", Bluetooth mics and other common problems, with fixes.
+  - name: Security issue
+    url: https://github.com/mahfuzur/openvoicetype/security/advisories/new
+    about: Please report security problems privately, not as a public issue (see SECURITY.md).

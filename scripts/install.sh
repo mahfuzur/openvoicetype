@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Installs the dictation POC: links `dictate` into ~/.local/bin, seeds the config, links the Whisper model,
+# Installs the dictation POC: links `dictate` into ~/.local/bin, seeds the config, downloads the Whisper model,
 # and installs S1-mini (llama.cpp + a 484 MB model) for offline cleanup. INSTALL_S1=off skips S1-mini.
 set -euo pipefail
 
@@ -10,8 +10,6 @@ BIN_DIR="$HOME/.local/bin"
 CONFIG_DIR="$HOME/.config/voice-to-text"
 MODEL_DIR="$HOME/.local/share/whisper"
 MODEL="$MODEL_DIR/ggml-large-v3-turbo.bin"
-# Reuse an existing copy from Superwhisper if it is installed (saves a 1.6 GB download).
-SUPERWHISPER_MODEL="$HOME/Library/Application Support/superwhisper/ggml-large-v3-turbo.bin"
 S1_DIR="$HOME/.local/share/s1-mini"
 S1_MODEL="$S1_DIR/s1-mini-q4_k_m.gguf"
 
@@ -35,15 +33,12 @@ if [[ ! -f "$CONFIG_DIR/config.sh" ]]; then
   echo "Created $CONFIG_DIR/config.sh"
 fi
 
+# An existing file or link is kept (older installs linked another app's copy; it keeps working).
 if [[ ! -e "$MODEL" ]]; then
-  if [[ -f "$SUPERWHISPER_MODEL" ]]; then
-    ln -sf "$SUPERWHISPER_MODEL" "$MODEL"
-    echo "Linked model from Superwhisper"
-  else
-    echo "Downloading ggml-large-v3-turbo.bin (1.6 GB)..."
-    curl -L --fail -o "$MODEL" \
-      https://huggingface.co/ggerganov/whisper.cpp/resolve/main/ggml-large-v3-turbo.bin
-  fi
+  echo "Downloading ggml-large-v3-turbo.bin (1.6 GB)..."
+  curl -L --fail -o "$MODEL.part" \
+    https://huggingface.co/ggerganov/whisper.cpp/resolve/main/ggml-large-v3-turbo.bin
+  mv "$MODEL.part" "$MODEL"
 fi
 
 if [[ "${INSTALL_S1:-on}" == on ]]; then

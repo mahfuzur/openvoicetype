@@ -1,10 +1,10 @@
 # dmgbuild settings for the release DMG: a 660 x 400 window with the background from scripts/make-artwork.swift,
 # the app on the left and an Applications link on the right, no toolbar or sidebar. Used by scripts/release.sh:
-#   dmgbuild -s scripts/dmg-settings.py -D app=<VoiceToText.app> -D background=<tiff> -D icon=<icns> "Voice to Text" out.dmg
+#   dmgbuild -s scripts/dmg-settings.py -D app=<VoiceToText.app> -D background=<tiff> -D icon=<icns> "OpenVoiceType" out.dmg
 # `defines` is provided by dmgbuild.
 app = defines["app"]  # noqa: F821
 # Finder shows the file name under the icon, and it's what lands in Applications: the product name, not "VoiceToText".
-app_name = "Voice to Text.app"
+app_name = "OpenVoiceType.app"
 
 files = [(app, app_name)]
 symlinks = {"Applications": "/Applications"}

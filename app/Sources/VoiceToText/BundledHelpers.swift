@@ -10,7 +10,7 @@ enum BundledHelpers {
     static let names = ["whisper-server", "whisper-cli", "llama-server"]
     private static let bundled = Bundle.main.bundleURL.appendingPathComponent("Contents/Helpers")
     private static let installed = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0]
-        .appendingPathComponent("Voice to Text/Helpers")
+        .appendingPathComponent("OpenVoiceType/Helpers")
 
     /// The directory to run the helpers from (`VTT_BIN_DIR`): the copy, or the bundle if copying failed; nil in a
     /// build without helpers (the script then uses Homebrew's).

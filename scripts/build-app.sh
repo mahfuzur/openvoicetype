@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # Builds VoiceToText.app with SwiftPM (no Xcode needed) and, with --install, copies it to
-# /Applications (where the DMG puts it, so there's only ever one copy) and launches it. The app bundles its own whisper-server, whisper-cli and llama-server
+# /Applications/OpenVoiceType.app (where the DMG puts it, so there's only ever one copy) and launches it. The app bundles its own whisper-server, whisper-cli and llama-server
 # (scripts/build-deps.sh, cached after the first build), so it runs on a Mac without Homebrew.
 #
 #   VERSION=0.2.0      sets the version (default: the one in app/Info.plist); release.sh passes the tag
@@ -10,7 +10,8 @@ set -euo pipefail
 
 REPO_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 APP_NAME="VoiceToText"
-BUNDLE_ID="io.github.mahfuzur.voicetotext"
+BUNDLE_ID="io.github.mahfuzur.openvoicetype"
+PRODUCT_NAME="OpenVoiceType" # the name users see: the installed app, the DMG
 PKG_DIR="$REPO_DIR/app"
 OUT="$PKG_DIR/build/$APP_NAME.app"
 INSTALL_DIR="/Applications"
@@ -76,8 +77,9 @@ codesign --force "${SIGN_ARGS[@]}" --entitlements "$PKG_DIR/VoiceToText.entitlem
 echo "Built $OUT"
 
 # Installed under the product name, like the DMG does, replacing any older copy (including one named VoiceToText.app).
+# A copy under the old name, "Voice to Text.app", is left for the app to offer to trash (Migration.swift).
 if [[ "${1:-}" == "--install" ]]; then
-  INSTALLED="$INSTALL_DIR/Voice to Text.app"
+  INSTALLED="$INSTALL_DIR/$PRODUCT_NAME.app"
   pkill -x "$APP_NAME" 2>/dev/null || true
   mkdir -p "$INSTALL_DIR"
   rm -rf "${INSTALL_DIR:?}/$APP_NAME.app" "$INSTALLED"
