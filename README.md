@@ -28,14 +28,17 @@ Speech is transcribed **on your Mac** with [whisper.cpp](https://github.com/ggml
 - **Dictionary:** teach it names and terms, and fix words it keeps mishearing.
 - **Floating indicator:** a live waveform while listening, then *Transcribing…* and *Polishing…*, and *✓ Pasted* when done.
 - **Microphone picker and test**, with Bluetooth headsets handled. The built-in mic still transcribes more accurately.
-- **Fallback:** if Claude is slow or unavailable, you still get the raw transcript. A dictation is never lost.
+- **Offline cleanup:** with no internet, or if Claude fails, [S1-mini by Superwhisper](https://huggingface.co/superwhisper/s1-mini-GGUF)
+  cleans up the text on your Mac instead (English only). Pick **S1-mini (offline)** in the menu to always stay on-device.
+- **Fallback:** if cleanup fails, you still get the raw transcript. A dictation is never lost.
 
 ## Requirements
 
 - macOS 13 or later on **Apple Silicon**.
 - [Homebrew](https://brew.sh).
 - The [Claude Code](https://docs.anthropic.com/en/docs/claude-code) CLI, installed and logged in. Check with `claude --version`, and log in by running `claude` once.
-  You can also use Voice to Text **without** Claude: turn off **Clean Up with Claude** to get the raw Whisper transcript.
+  You can also use Voice to Text **without** Claude: pick **Cleanup Model ▸ S1-mini (offline)**, or turn off **Clean Up Text**
+  to get the raw Whisper transcript.
 - Xcode Command Line Tools (`xcode-select --install`). The full Xcode isn't needed.
 
 ## Install
@@ -45,7 +48,7 @@ git clone https://github.com/mahfuzur/voice-to-text.git
 cd voice-to-text
 
 brew install sox whisper-cpp
-./scripts/install.sh               # downloads the Whisper model (1.6 GB), sets up the config and the `dictate` command, runs a self-test
+./scripts/install.sh               # downloads the Whisper model (1.6 GB) and S1-mini (484 MB, installs llama.cpp), sets up the config and the `dictate` command, runs a self-test
 ./scripts/setup-signing.sh         # one time: a local signing identity, so macOS keeps permissions across updates
 ./scripts/build-app.sh --install   # builds the menu-bar app into ~/Applications and launches it
 ```
@@ -113,20 +116,24 @@ To use a hotkey without the app, bind `~/.local/bin/dictate` to a keyboard short
 hotkey ─► record (AVAudioEngine, 16 kHz WAV)
        ─► transcribe on-device (whisper.cpp + a short style prompt and your vocabulary)
        ─► clean up (claude -p with prompts/system.md + a mode prompt; tools disabled, extended thinking off)
+          or, offline, S1-mini through a local llama-server
        ─► post-process (dictionary replacements, output filter, paragraph and email fixes)
        ─► paste at the cursor (Cmd+V, then your clipboard is restored)
 ```
 
 - **Prompts** live in [`prompts/`](prompts/): the core rules are in `system.md`, and each mode has a file in `modes/`.
   The transcript is always treated as text to clean up, never as instructions: "write me a poem" comes back as that sentence, not as a poem.
-- **Timing today:** about 2–3 s for Whisper and 4–6 s for Claude after you stop speaking.
+- **S1-mini** is a 0.6B model trained only to clean up transcripts. It takes a style setting per mode instead of a prompt,
+  and it can't use your vocabulary (dictionary replacements still apply) or format code, so code mode keeps the raw text.
+  It uses about 1 GB of memory while loaded: kept loaded when selected, and stopped 10 minutes after a fallback.
+- **Timing today:** about 2–3 s for Whisper, then 4–6 s for Claude or about 0.3 s for S1-mini, after you stop speaking.
   Making this faster is the next milestone ([roadmap](docs/ROADMAP.md)).
 
 ## Privacy
 
 - **Audio** is recorded to a temporary file, transcribed on your Mac, and deleted straight away. It is never uploaded.
-- **Transcript text** is sent to Claude through *your* Claude Code CLI, only when cleanup is on. This project has no servers,
-  telemetry or analytics.
+- **Transcript text** is sent to Claude through *your* Claude Code CLI, only when cleanup is on and Claude is the selected
+  model. With S1-mini selected, nothing leaves your Mac. This project has no servers, telemetry or analytics.
 - **Logs:** `~/Library/Logs/voice-to-text/dictate.log` records timings and, by default, the raw and cleaned text, for
   troubleshooting. Set `LOG_TEXT=off` in `~/.config/voice-to-text/config.sh` to keep text out of the log.
 
@@ -142,7 +149,8 @@ All options are documented in [scripts/config.example.sh](scripts/config.example
 | The pill says "Copied. Press ⌘V" | Accessibility isn't allowed. Menu → **Accessibility: Click to Fix**. If it's already switched on, remove Voice to Text from the list and add it again. |
 | "No speech detected" every time | Microphone access is missing, or the wrong mic is selected. Try **Microphone ▸ Test Microphone…**. |
 | Bluetooth mic says "No audio from …" | Pick the built-in mic under **Microphone**, or reconnect the earbuds. |
-| "Pasted without cleanup" | Claude timed out or isn't logged in. Run `claude` in a terminal to check. |
+| "Pasted without cleanup" | Claude timed out or isn't logged in, and S1-mini isn't installed. Run `claude` in a terminal to check, or run `./scripts/install.sh` for offline cleanup. |
+| "Pasted · cleaned offline" | Claude was unavailable, so S1-mini cleaned up the text. Check your connection or run `claude`. |
 | Something else | Check `~/Library/Logs/voice-to-text/dictate.log` and open an issue. |
 
 ## Contributing
@@ -154,6 +162,7 @@ and [docs/ROADMAP.md](docs/ROADMAP.md) for what's planned.
 
 - [whisper.cpp](https://github.com/ggml-org/whisper.cpp) and OpenAI's [Whisper](https://github.com/openai/whisper) models, for local speech recognition.
 - [SoX](https://sourceforge.net/projects/sox/), for command-line recording.
+- S1-mini by Superwhisper ([Apache 2.0](https://huggingface.co/superwhisper/s1-mini-GGUF)) and [llama.cpp](https://github.com/ggml-org/llama.cpp), for offline cleanup.
 - Ideas from [Wispr Flow](https://wisprflow.ai), [Superwhisper](https://superwhisper.com), [Typeless](https://www.typeless.com) and [VoiceInk](https://github.com/Beingpax/VoiceInk).
 
 ## License

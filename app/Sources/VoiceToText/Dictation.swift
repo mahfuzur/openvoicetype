@@ -6,7 +6,8 @@ final class Dictation {
     enum State { case idle, starting, recording, transcribing, polishing, testingMic }
 
     enum Outcome {
-        case text(String, cleanupFailed: Bool, context: DictationContext)
+        /// `offlineFallback`: Claude was unavailable and S1-mini cleaned the text up instead.
+        case text(String, cleanupFailed: Bool, offlineFallback: Bool, context: DictationContext)
         case noSpeech
         case cancelled
         case failed(String)
@@ -24,6 +25,10 @@ final class Dictation {
 
     var refine = true
     var claudeModel = "haiku"
+    /// "claude", or "s1" for S1-mini (offline, through llama-server).
+    var cleanupEngine = "claude"
+    /// Use S1-mini when Claude is unavailable (offline, not logged in, error, timeout).
+    var s1Fallback = true
     /// nil = system default input.
     var inputDeviceUID: String?
     /// The mic used by the current or most recent recording.
@@ -119,15 +124,19 @@ final class Dictation {
             guard status == 0 else { return self.finish(.failed("Transcription failed")) }
             guard !raw.isEmpty else { return self.finish(.noSpeech) }
 
-            // Always run `refine`: with cleanup off or in Raw mode it skips Claude but still applies
-            // the dictionary replacements and output filter.
-            let usesClaude = self.refine && context.mode != .raw
-            if usesClaude { self.state = .polishing }
+            // Always run `refine`: with cleanup off or in Raw mode it skips the model but still applies
+            // the dictionary replacements and output filter. S1-mini has no code style, so it skips code mode.
+            let usesCleanup = self.refine && context.mode != .raw
+                && !(self.cleanupEngine == "s1" && context.mode == .code)
+            if usesCleanup { self.state = .polishing }
             let env = ["VTT_MODE": context.mode.rawValue, "VTT_APP": context.appName]
             self.run(["refine"], input: raw, extraEnv: env) { status, output in
                 let cleaned = output.trimmingCharacters(in: .whitespacesAndNewlines)
-                let failed = usesClaude && (status != 0 || cleaned.isEmpty)
-                self.finish(.text(cleaned.isEmpty ? raw : cleaned, cleanupFailed: failed, context: context))
+                // Exit 4: Claude was unavailable and S1-mini cleaned it up. Exit 3: raw text.
+                let offlineFallback = usesCleanup && status == 4 && !cleaned.isEmpty
+                let failed = usesCleanup && !offlineFallback && (status != 0 || cleaned.isEmpty)
+                self.finish(.text(cleaned.isEmpty ? raw : cleaned, cleanupFailed: failed,
+                                  offlineFallback: offlineFallback, context: context))
             }
         }
     }
@@ -137,6 +146,23 @@ final class Dictation {
         maxDurationTimer?.invalidate()
         recorder.cancel()
         finish(.cancelled)
+    }
+
+    /// Controls the local S1-mini server: `start --keep` while S1-mini is selected, `release` to let it stop
+    /// after idling, `status` (prints running, stopped or missing).
+    func s1Server(_ args: [String], completion: ((Int32, String) -> Void)? = nil) {
+        run(["s1-server"] + args) { status, output in completion?(status, output) }
+    }
+
+    /// Stops the S1-mini server before the app quits (blocks briefly).
+    func stopS1Server() {
+        let process = Process()
+        process.executableURL = URL(fileURLWithPath: "/bin/bash")
+        process.arguments = [scriptURL.path, "s1-server", "stop"]
+        process.standardOutput = FileHandle.nullDevice
+        process.standardError = FileHandle.nullDevice
+        try? process.run()
+        process.waitUntilExit()
     }
 
     private func finish(_ outcome: Outcome) {
@@ -151,6 +177,8 @@ final class Dictation {
         env["VTT_QUIET"] = "on"
         env["VTT_REFINE"] = refine ? "on" : "off"
         env["VTT_CLAUDE_MODEL"] = claudeModel
+        env["VTT_CLEANUP"] = cleanupEngine
+        env["VTT_S1_FALLBACK"] = s1Fallback ? "on" : "off"
         let scriptPath = scriptURL.path
 
         DispatchQueue.global(qos: .userInitiated).async {

@@ -9,7 +9,7 @@ final class OverlayModel: ObservableObject {
         case micTest(String)
         case recording
         case transcribing
-        case polishing
+        case polishing(offline: Bool)
         case success(String)
         case message(String, isError: Bool)
     }
@@ -167,10 +167,10 @@ struct OverlayView: View {
         case .transcribing:
             ProcessingBars(color: Color(red: 1.0, green: 0.62, blue: 0.2))
             ShimmerText(text: "Transcribing")
-        case .polishing:
+        case .polishing(let offline):
             Image(systemName: "sparkles")
                 .foregroundColor(Color(red: 0.75, green: 0.6, blue: 1.0))
-            ShimmerText(text: "Polishing")
+            ShimmerText(text: offline ? "Polishing offline" : "Polishing")
         case .success(let text):
             Image(systemName: "checkmark.circle.fill")
                 .foregroundColor(.green)

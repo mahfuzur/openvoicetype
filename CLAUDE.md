@@ -13,7 +13,7 @@ See [docs/ROADMAP.md](docs/ROADMAP.md) (the phased roadmap, which is the source 
 ```
 hotkey -> record (AVAudioEngine in the app, or sox/rec from the CLI; 16 kHz mono WAV)
        -> transcribe (whisper.cpp, ggml-large-v3-turbo, fully local)
-       -> clean up (claude -p, subscription auth)
+       -> clean up (claude -p, subscription auth; offline or on failure: S1-mini via local llama-server)
        -> post-process (dictionary, output filter) -> paste (CGEvent Cmd+V, clipboard restored)
 ```
 
@@ -51,6 +51,19 @@ claude -p --model haiku --tools "" --strict-mcp-config --no-session-persistence 
   in `<transcript>` and never answer or act on it (a dictated "write me an email" must come back as that sentence, cleaned up).
 - On any failure, empty output or timeout (~15 s), paste the raw Whisper text. A dictation must never be lost.
 - Custom vocabulary (names, product terms) goes in the system prompt and in Whisper's `--prompt`.
+
+## Offline cleanup with S1-mini (M2.5)
+
+- S1-mini by Superwhisper (0.6B, `~/.local/share/s1-mini/s1-mini-q4_k_m.gguf`, config `S1_MODEL`) runs in `llama-server`
+  (Homebrew `llama.cpp`) on `127.0.0.1:$S1_PORT` (8178). `refine_s1()` in `dictate.sh` posts to `/v1/chat/completions`.
+- `CLEANUP=claude|s1` (`VTT_CLEANUP`). With `claude`, S1-mini is the fallback (`S1_FALLBACK`, `VTT_S1_FALLBACK`) when there's
+  `is_offline()` is true (no default route, or a 1 s TCP connect to `api.anthropic.com:443` fails; skipped behind a proxy,
+  `ONLINE_CHECK=off` disables it, `VTT_OFFLINE=on` forces offline) or Claude fails. Then raw text. Code mode never uses S1-mini.
+- It isn't instruction-following: use its fixed system prompt plus the control line from `s1_control_line()`.
+  It needs `--jinja --chat-template-kwargs '{"enable_thinking":false}' --temp 0`. It takes no vocabulary.
+- Server lifecycle: `dictate.sh s1-server start [--keep] | release | stop | status`. The app keeps it loaded (`--keep`) while
+  S1-mini is selected; a fallback start is stopped by a detached watchdog after `S1_IDLE_MINUTES`. About 1 GB RSS.
+- Credit it as "S1-mini by Superwhisper" (license naming clause). Eval: `evals/run.py --cleanup s1` (baseline 10/20; code cases skip by design).
 
 ## Prompts and formatting (M2)
 
@@ -108,7 +121,8 @@ The menu-bar app (`app/Sources/VoiceToText/`) records in-process and runs `dicta
   Mic events are written to `dictate.log` as `APP MIC …` lines.
 - `AudioDevices.swift`: Core Audio input-device list (UID, name, Bluetooth flag) and the default input.
 - `Dictation.swift`: the state machine (idle, recording, transcribing, polishing). It runs `dictate.sh transcribe <wav>`, then
-  `dictate.sh refine` (transcript on stdin; exit 3 means the raw text was used), with `VTT_QUIET=on`, `VTT_REFINE`
+  `dictate.sh refine` (transcript on stdin; exit 3 means the raw text was used, exit 4 means S1-mini replaced an unavailable Claude),
+  with `VTT_QUIET=on`, `VTT_REFINE`, `VTT_CLEANUP`, `VTT_S1_FALLBACK`
   and `VTT_CLAUDE_MODEL`. `VTT_*` variables override `config.sh`.
 - `Overlay.swift`: a floating, click-through, non-activating `NSPanel` hosting a SwiftUI pill. It shows a live waveform and timer,
   then Transcribing, then Polishing, then Pasted, No speech, or an error with a shake.
