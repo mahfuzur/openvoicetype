@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # Local dictation: record -> whisper.cpp -> cleanup (claude CLI, or S1-mini offline) -> paste into the focused app.
 #
-# Usage: dictate.sh [toggle|start|stop|cancel|file <wav>|selftest|transcribe <wav>|refine|s1-server <cmd>]
+# Usage: dictate.sh [toggle|start|stop|cancel|file <wav>|selftest|transcribe <wav>|refine|s1-server|whisper-server <cmd>]
 #   toggle      (default) start recording, or stop and process if already recording
 #   start       start recording
 #   stop        stop recording, transcribe, refine, paste
@@ -11,7 +11,8 @@
 #   transcribe  print the raw transcript of a WAV (empty if no speech)        [used by the app]
 #   refine      clean up the transcript on stdin and print it; exit 3 = fell back to raw,
 #               exit 4 = Claude was unavailable and S1-mini cleaned it up    [used by the app]
-#   s1-server   start [--keep] | release | stop | status: the local S1-mini server (llama-server)
+#   s1-server       start [--keep] | release | stop | status: the local S1-mini server (llama-server)
+#   whisper-server  start [--keep] | release | stop | status: Whisper with the model kept loaded
 
 set -euo pipefail
 
@@ -22,6 +23,12 @@ CONFIG_FILE="${VTT_CONFIG:-$HOME/.config/voice-to-text/config.sh}"
 [[ -f "$CONFIG_FILE" ]] && source "$CONFIG_FILE"
 
 WHISPER_MODEL="${WHISPER_MODEL:-$HOME/.local/share/whisper/ggml-large-v3-turbo.bin}"
+# Keep Whisper loaded in a local whisper-server (about 0.9 s per dictation instead of 1.6-2 s with whisper-cli).
+# It starts when recording starts and stops after WHISPER_IDLE_MINUTES unused; whisper-cli is the fallback.
+WHISPER_SERVER="${WHISPER_SERVER:-on}"
+WHISPER_PORT="${WHISPER_PORT:-8179}"
+WHISPER_IDLE_MINUTES="${WHISPER_IDLE_MINUTES:-10}"
+WHISPER_SERVER_TIMEOUT="${WHISPER_SERVER_TIMEOUT:-60}"
 LANGUAGE="${LANGUAGE:-en}"
 VOCAB="${VOCAB:-}"
 # VTT_* variables are set by the menu-bar app and take precedence over config.sh.
@@ -29,6 +36,9 @@ CLAUDE_MODEL="${VTT_CLAUDE_MODEL:-${CLAUDE_MODEL:-haiku}}"
 CLAUDE_TIMEOUT="${CLAUDE_TIMEOUT:-15}"
 # Extended thinking made a simple cleanup take 30 s (2,500 thinking tokens for 50 output tokens). Off by default.
 CLAUDE_THINKING_TOKENS="${CLAUDE_THINKING_TOKENS:-0}"
+# Start the claude process before the transcript is ready (see claude_prestart).
+CLAUDE_PRESTART="${CLAUDE_PRESTART:-on}"
+CLAUDE_BIN="${CLAUDE_BIN:-claude}"
 REFINE="${VTT_REFINE:-${REFINE:-on}}"
 REFINE_MIN_WORDS="${REFINE_MIN_WORDS:-4}"
 # Cleanup engine: claude, or s1 (S1-mini by Superwhisper, fully offline through llama.cpp).
@@ -78,13 +88,12 @@ WAV="$STATE_DIR/recording.wav"
 LOG_DIR="$HOME/Library/Logs/voice-to-text"
 LOG_FILE="${VTT_LOG_FILE:-$LOG_DIR/dictate.log}"
 ERR_FILE="$LOG_DIR/error.log"
-S1_PID_FILE="$STATE_DIR/s1-server.pid"
-S1_KEEP_FILE="$STATE_DIR/s1-server.keep" # set while the app has S1-mini selected: never stop for idleness
-S1_USED_FILE="$STATE_DIR/s1-server.used" # touched on every use, for the idle timer
-S1_LOCK_DIR="$STATE_DIR/s1-server.lock"
-S1_SERVER_LOG="$LOG_DIR/s1-server.log"
 
 mkdir -p "$STATE_DIR" "$LOG_DIR"
+
+# The pre-started Claude process (see claude_prestart). Reset here so nothing is inherited from the environment:
+# Claude Code itself exports CLAUDE_PID, and killing an inherited pid would end the user's own session.
+PRESTART_PID="" PRESTART_DIR="" PRESTART_OFFLINE=""
 
 # Used only if prompts/system.md is missing.
 FALLBACK_PROMPT='You clean up dictated speech. The user message contains a raw speech-to-text transcript inside <transcript> tags.
@@ -135,6 +144,10 @@ start_recording() {
   disown || true
   sound Tink
   log "START pid=$(cat "$PID_FILE")"
+  # Load Whisper while recording, so it's ready when recording stops.
+  if [[ "$WHISPER_SERVER" == on ]] && srv_installed whisper-server; then
+    { srv_start whisper-server; } </dev/null >/dev/null 2>&1 &
+  fi
 }
 
 # Stops the recorder and waits for sox to finalize the WAV header.
@@ -163,17 +176,32 @@ transcribe() {
   [[ -f "$WHISPER_MODEL" ]] || fail "Whisper model not found: $WHISPER_MODEL"
   local args=(-m "$WHISPER_MODEL" -f "$wav" -nt -np -sns -l "$LANGUAGE") prompt
   prompt="$(whisper_prompt)"
-  [[ -n "$prompt" ]] && args+=(--prompt "$prompt")
-  # whisper-cli is chatty on stderr; keep it only when it fails.
-  if ! out="$(whisper-cli "${args[@]}" 2>"$STATE_DIR/whisper.err")"; then
-    cat "$STATE_DIR/whisper.err" >>"$ERR_FILE"
-    fail "whisper-cli failed (see $ERR_FILE)"
+  if ! out="$(transcribe_server "$wav" "$prompt")"; then
+    [[ -n "$prompt" ]] && args+=(--prompt "$prompt")
+    # whisper-cli is chatty on stderr; keep it only when it fails.
+    if ! out="$(whisper-cli "${args[@]}" 2>"$STATE_DIR/whisper.err")"; then
+      cat "$STATE_DIR/whisper.err" >>"$ERR_FILE"
+      fail "whisper-cli failed (see $ERR_FILE)"
+    fi
   fi
   # Join lines and trim whitespace.
   out="$(printf '%s' "$out" | tr '\n' ' ' | sed -E 's/[[:space:]]+/ /g; s/^ //; s/ $//')"
   if printf '%s' "$out" | tr '[:upper:]' '[:lower:]' | grep -Eq "$HALLUCINATIONS"; then
     out=""
   fi
+  printf '%s' "$out"
+}
+
+# Transcribes with the warm whisper-server, starting it if needed (same prompt and settings as whisper-cli).
+# Fails so the caller can use whisper-cli instead.
+transcribe_server() {
+  local wav="$1" prompt="$2" out
+  [[ "$WHISPER_SERVER" == on ]] && srv_installed whisper-server || return 1
+  srv_start whisper-server || return 1
+  out="$(curl -s --fail --max-time "$WHISPER_SERVER_TIMEOUT" "http://127.0.0.1:$WHISPER_PORT/inference" \
+    -F "file=@$wav" -F response_format=text -F temperature=0 --form-string "language=$LANGUAGE" \
+    --form-string "prompt=$prompt" 2>>"$ERR_FILE")" || { log "WARN whisper-server failed, using whisper-cli"; return 1; }
+  touch "$(srv_file whisper-server used)"
   printf '%s' "$out"
 }
 
@@ -296,16 +324,114 @@ post_process() {
 }
 
 # Prints refined text, or fails (non-zero) so the caller can fall back to raw text.
+# Uses the Claude process started by claude_prestart when there is one, otherwise a one-shot `claude -p`.
 refine() {
-  local raw="$1" sys out
+  local raw="$1" sys out status=0
+  if [[ -n "${PRESTART_PID:-}" ]]; then
+    out="$(claude_send "$raw")" || status=$?
+    if ((status == 0)) && [[ -n "$(trim "$out")" ]]; then
+      printf '%s' "$out"
+      return 0
+    fi
+    ((status == 2)) || return 1
+    # The stream wasn't understood (a Claude Code update may have changed the flags or format): the one-shot
+    # call doesn't depend on it.
+    log "WARN claude stream-json not understood (see $ERR_FILE), using a one-shot call"
+  fi
   sys="$(system_prompt)"
   # Neutral cwd so no project CLAUDE.md is loaded. perl's alarm acts as `timeout` (not on macOS by default).
   out="$(cd /tmp && user_message "$raw" |
     MAX_THINKING_TOKENS="$CLAUDE_THINKING_TOKENS" perl -e 'alarm shift; exec @ARGV or die "exec failed: $!"' "$CLAUDE_TIMEOUT" \
-      claude -p --model "$CLAUDE_MODEL" --tools "" --strict-mcp-config --no-session-persistence \
+      "$CLAUDE_BIN" -p --model "$CLAUDE_MODEL" --tools "" --strict-mcp-config --no-session-persistence \
       --system-prompt "$sys" 2>>"$ERR_FILE")" || return 1
   [[ -n "$(trim "$out")" ]] || return 1
   printf '%s' "$out"
+}
+
+# --- Pre-started Claude ---
+# CLI startup (about 2.5 s) is most of a one-shot cleanup. claude_prestart launches `claude -p` in stream-json mode
+# before the transcript exists (the app runs `refine` when recording starts), so it is ready when the text arrives:
+# about 1 s instead of 3.5-4 s. Each process serves exactly one dictation, so no earlier transcript stays in its context.
+
+claude_prestart() {
+  [[ "$CLAUDE_PRESTART" == on && "$REFINE" == on && "$MODE" != raw && "$CLEANUP" == claude ]] || return 0
+  command -v "$CLAUDE_BIN" >/dev/null || return 0
+  if is_offline; then
+    log "OFFLINE at start, warming S1-mini"
+    if [[ "$S1_FALLBACK" == on && "$MODE" != code ]] && srv_installed s1-server; then
+      { srv_start s1-server; } </dev/null >/dev/null 2>&1 &
+    fi
+    PRESTART_OFFLINE=on
+    return 0
+  fi
+  local sys
+  sys="$(system_prompt)"
+  PRESTART_DIR="$(mktemp -d "$STATE_DIR/claude.XXXXXX")"
+  mkfifo "$PRESTART_DIR/in"
+  (cd /tmp && MAX_THINKING_TOKENS="$CLAUDE_THINKING_TOKENS" exec "$CLAUDE_BIN" -p --input-format stream-json \
+    --output-format stream-json --verbose --model "$CLAUDE_MODEL" --tools "" --strict-mcp-config \
+    --no-session-persistence --system-prompt "$sys") <"$PRESTART_DIR/in" >"$PRESTART_DIR/out" 2>>"$ERR_FILE" &
+  PRESTART_PID=$!
+  # Holds its stdin open until the transcript is sent (the fifo open waits for the reader).
+  exec 3>"$PRESTART_DIR/in"
+}
+
+# Sends one transcript to the pre-started process and prints the answer. Runs in a subshell (from refine_text).
+# Returns 1 if Claude failed (error result, no answer, stuck), so cleanup falls back to S1-mini or raw text, and 2 if the
+# stream wasn't understood (the process died before answering, or printed non-JSON), so refine() uses a one-shot call.
+# A normal answer comes in about 1 s: `system init` about 0.1 s after the message, then `assistant`, then `result`.
+claude_send() {
+  local raw="$1" out="$PRESTART_DIR/out" sent now answer_at=0
+  trap '' PIPE # if claude died, the write fails instead of killing the script
+  VTT_USER_MESSAGE="$(user_message "$raw")" perl -MJSON::PP -e '
+    my $message = $ENV{VTT_USER_MESSAGE}; utf8::decode($message);
+    print JSON::PP->new->utf8->encode({type => "user", message => {role => "user", content => $message}}), "\n";' >&3 ||
+    return 2
+  # Wait for the result (checks every 50 ms, by the clock) up to CLAUDE_TIMEOUT. Stop early when waiting can't help.
+  sent="$(now_ms)"
+  while :; do
+    grep -q '"type":"result"' "$out" 2>/dev/null && break
+    kill -0 "$PRESTART_PID" 2>/dev/null || break
+    grep -qv '^{' "$out" 2>/dev/null && break                    # a line that isn't JSON: the format changed
+    now="$(now_ms)"
+    ((now - sent >= CLAUDE_TIMEOUT * 1000)) && break
+    ((now - sent >= 5000)) && [[ ! -s "$out" ]] && break          # no event at all after 5 s: stuck
+    if ((answer_at == 0)) && grep -q '"type":"assistant"' "$out" 2>/dev/null; then answer_at="$now"; fi
+    ((answer_at > 0 && now - answer_at >= 1500)) && break         # an answer but no result after 1.5 s: use the answer
+    sleep 0.05
+  done
+  if [[ ! -s "$out" ]]; then
+    kill -0 "$PRESTART_PID" 2>/dev/null && return 1 # stuck
+    return 2                                         # died without a word
+  fi
+  perl -MJSON::PP -e '
+    my ($answer, $bad, $events) = (undef, 0, 0);
+    while (my $line = <>) {
+      my $event = eval { JSON::PP->new->utf8->decode($line) };
+      if (ref $event ne "HASH" || !$event->{type}) { $bad++; next }
+      $events++;
+      if ($event->{type} eq "result") {
+        exit 1 if $event->{is_error};
+        $answer = $event->{result} if defined $event->{result};
+        last;
+      }
+      if ($event->{type} eq "assistant" && ref $event->{message}{content} eq "ARRAY") {
+        my $text = join "", map { ref $_ eq "HASH" && ($_->{type} // "") eq "text" ? $_->{text} // "" : "" }
+          @{ $event->{message}{content} };
+        $answer = $text if length $text;
+      }
+    }
+    if (defined $answer) { binmode STDOUT, ":encoding(UTF-8)"; print $answer; exit 0 }
+    exit(($bad || !$events) ? 2 : 1);' "$out"
+}
+
+# Closes the pre-started process's stdin (it exits) and removes its files. Safe to call when none was started.
+claude_cleanup() {
+  [[ -n "${PRESTART_PID:-}" ]] || return 0
+  exec 3>&-
+  kill "$PRESTART_PID" 2>/dev/null || true
+  rm -rf "$PRESTART_DIR"
+  PRESTART_PID="" PRESTART_DIR=""
 }
 
 # True when Claude can't be reached, so cleanup skips it instead of waiting for it to time out.
@@ -319,66 +445,134 @@ is_offline() {
   ! perl -e 'alarm shift; exec @ARGV or die' 2 nc -z -G 1 "$ONLINE_CHECK_HOST" 443 >/dev/null 2>&1
 }
 
-# --- S1-mini (llama-server) ---
+# --- Local model servers ---
+# s1-server: llama-server with S1-mini. whisper-server: Whisper with the model kept loaded.
+# Each has $STATE_DIR/<name>.pid, .keep (set while the app keeps it loaded, so it's never stopped for idleness),
+# .used (touched on every use, for the idle timer) and .lock, and logs to $LOG_DIR/<name>.log.
 
-s1_installed() { [[ -f "$S1_MODEL" ]] && command -v llama-server >/dev/null; }
+srv_file() { printf '%s/%s.%s' "$STATE_DIR" "$1" "$2"; }
 
-s1_running() { [[ -f "$S1_PID_FILE" ]] && kill -0 "$(cat "$S1_PID_FILE")" 2>/dev/null; }
+srv_port() { if [[ "$1" == s1-server ]]; then printf '%s' "$S1_PORT"; else printf '%s' "$WHISPER_PORT"; fi; }
 
-s1_healthy() { curl -s --max-time 1 "http://127.0.0.1:$S1_PORT/health" 2>/dev/null | grep -q '"ok"'; }
+srv_idle_minutes() { if [[ "$1" == s1-server ]]; then printf '%s' "$S1_IDLE_MINUTES"; else printf '%s' "$WHISPER_IDLE_MINUTES"; fi; }
 
-# Starts llama-server with S1-mini unless it is running, and waits until the model is loaded (about 1 s).
-s1_start() {
-  s1_installed || return 1
-  # A lock, so parallel callers (the eval) don't start two servers on one port. A lock left by a killed run is stale.
-  find "$S1_LOCK_DIR" -maxdepth 0 -mmin +1 -exec rmdir {} \; 2>/dev/null || true
-  for _ in $(seq 1 100); do mkdir "$S1_LOCK_DIR" 2>/dev/null && break; sleep 0.1; done
-  if ! s1_running; then
-    rm -f "$S1_PID_FILE"
-    nohup llama-server -m "$S1_MODEL" --host 127.0.0.1 --port "$S1_PORT" --jinja \
-      --chat-template-kwargs '{"enable_thinking":false}' --temp 0 -c 4096 -np 1 \
-      </dev/null >"$S1_SERVER_LOG" 2>&1 &
-    echo $! >"$S1_PID_FILE"
-    disown || true
-    log "S1 START pid=$(cat "$S1_PID_FILE")"
-    touch "$S1_USED_FILE"
+srv_installed() {
+  case "$1" in
+    s1-server) [[ -f "$S1_MODEL" ]] && command -v llama-server >/dev/null ;;
+    whisper-server) [[ -f "$WHISPER_MODEL" ]] && command -v whisper-server >/dev/null ;;
+    *) return 1 ;;
+  esac
+}
+
+srv_binary() { if [[ "$1" == s1-server ]]; then printf 'llama-server'; else printf 'whisper-server'; fi; }
+
+# True if the recorded pid is alive *and* is still our server. A pid file can outlive its process (a crash, a reboot)
+# and macOS reuses pids, so without the name check `stop` could kill an unrelated process.
+srv_running() {
+  local pid_file pid command
+  pid_file="$(srv_file "$1" pid)"
+  [[ -f "$pid_file" ]] || return 1
+  pid="$(cat "$pid_file")"
+  [[ "$pid" =~ ^[0-9]+$ ]] && kill -0 "$pid" 2>/dev/null || return 1
+  command="$(ps -p "$pid" -o comm= 2>/dev/null)"
+  [[ "$(basename "$command")" == "$(srv_binary "$1")" ]]
+}
+
+srv_healthy() { curl -s --max-time 1 "http://127.0.0.1:$(srv_port "$1")/health" 2>/dev/null | grep -q '"ok"'; }
+
+# Launches the server detached (fd 3, a pre-started Claude's stdin, is not inherited) and records its pid.
+srv_launch() {
+  local log_file="$LOG_DIR/$1.log"
+  case "$1" in
+    s1-server)
+      nohup llama-server -m "$S1_MODEL" --host 127.0.0.1 --port "$S1_PORT" --jinja \
+        --chat-template-kwargs '{"enable_thinking":false}' --temp 0 -c 4096 -np 1 \
+        </dev/null >"$log_file" 2>&1 3>&- &
+      ;;
+    whisper-server)
+      nohup whisper-server -m "$WHISPER_MODEL" --host 127.0.0.1 --port "$WHISPER_PORT" -nt -sns -l "$LANGUAGE" \
+        </dev/null >"$log_file" 2>&1 3>&- &
+      ;;
+  esac
+  echo $! >"$(srv_file "$1" pid)"
+  disown || true
+}
+
+# Starts the server unless it is running, and waits until its model is loaded (S1-mini about 1 s, Whisper about 0.6 s).
+srv_start() {
+  local name="$1" lock
+  srv_installed "$name" || return 1
+  lock="$(srv_file "$name" lock)"
+  # A lock, so parallel callers don't start two servers on one port. A lock left by a killed run is stale.
+  find "$lock" -maxdepth 0 -mmin +1 -exec rmdir {} \; 2>/dev/null || true
+  for _ in $(seq 1 100); do mkdir "$lock" 2>/dev/null && break; sleep 0.1; done
+  if ! srv_running "$name"; then
+    srv_launch "$name"
+    log "SERVER $name START pid=$(cat "$(srv_file "$name" pid)")"
+    touch "$(srv_file "$name" used)"
     # The idle watchdog runs detached from this short-lived script.
-    nohup /bin/bash "$SCRIPT_DIR/$(basename "$SCRIPT_PATH")" s1-server watch "$(cat "$S1_PID_FILE")" \
-      </dev/null >/dev/null 2>&1 &
+    nohup /bin/bash "$SCRIPT_DIR/$(basename "$SCRIPT_PATH")" "$name" watch "$(cat "$(srv_file "$name" pid)")" \
+      </dev/null >/dev/null 2>&1 3>&- &
     disown || true
   fi
-  rmdir "$S1_LOCK_DIR" 2>/dev/null || true
-  touch "$S1_USED_FILE"
+  rmdir "$lock" 2>/dev/null || true
+  touch "$(srv_file "$name" used)"
   for _ in $(seq 1 150); do
-    s1_healthy && return 0
-    s1_running || { log "ERROR llama-server exited (see $S1_SERVER_LOG)"; return 1; }
+    srv_healthy "$name" && return 0
+    srv_running "$name" || { log "ERROR $name exited (see $LOG_DIR/$name.log)"; return 1; }
     sleep 0.1
   done
-  log "ERROR llama-server did not become ready in 15 s"
+  log "ERROR $name did not become ready in 15 s"
   return 1
 }
 
-s1_stop() {
-  rm -f "$S1_KEEP_FILE"
-  if s1_running; then
-    kill "$(cat "$S1_PID_FILE")" 2>/dev/null || true
-    log "S1 STOP ${1:-requested}"
+srv_stop() {
+  local name="$1" pid_file
+  pid_file="$(srv_file "$name" pid)"
+  rm -f "$(srv_file "$name" keep)"
+  if srv_running "$name"; then
+    kill "$(cat "$pid_file")" 2>/dev/null || true
+    log "SERVER $name STOP ${2:-requested}"
   fi
-  rm -f "$S1_PID_FILE"
+  rm -f "$pid_file"
 }
 
-# Stops the server (pid $1) once it has been unused for S1_IDLE_MINUTES, unless the app keeps it loaded.
+# Stops the server (pid $2) once it has been unused for its idle time, unless the app keeps it loaded.
 # Exits when that server is gone, so a restarted server gets its own watchdog.
-s1_watch() {
-  local pid="$1"
-  while s1_running && [[ "$(cat "$S1_PID_FILE" 2>/dev/null)" == "$pid" ]]; do
+srv_watch() {
+  local name="$1" pid="$2" minutes
+  minutes="$(srv_idle_minutes "$name")"
+  while srv_running "$name" && [[ "$(cat "$(srv_file "$name" pid)" 2>/dev/null)" == "$pid" ]]; do
     sleep 30
-    [[ -f "$S1_KEEP_FILE" ]] && continue
-    if [[ -n "$(find "$S1_USED_FILE" -mmin +"$S1_IDLE_MINUTES" 2>/dev/null)" ]]; then
-      s1_stop "idle ${S1_IDLE_MINUTES} min"
+    [[ -f "$(srv_file "$name" keep)" ]] && continue
+    if [[ -n "$(find "$(srv_file "$name" used)" -mmin +"$minutes" 2>/dev/null)" ]]; then
+      srv_stop "$name" "idle $minutes min"
     fi
   done
 }
+
+cmd_server() {
+  local name="$1"
+  case "${2:-status}" in
+    start)
+      [[ "${3:-}" == --keep ]] && touch "$(srv_file "$name" keep)"
+      srv_installed "$name" || { echo "$name: model or binary missing (run scripts/install.sh)" >&2; exit 1; }
+      srv_start "$name" || exit 1
+      ;;
+    release) rm -f "$(srv_file "$name" keep)" ;; # the idle timer stops it later
+    stop) srv_stop "$name" ;;
+    watch) srv_watch "$name" "${3:?}" ;;
+    status)
+      if ! srv_installed "$name"; then echo missing
+      elif srv_running "$name"; then echo running
+      else echo stopped
+      fi
+      ;;
+    *) echo "usage: dictate.sh $name start [--keep] | release | stop | status" >&2; exit 2 ;;
+  esac
+}
+
+# --- S1-mini ---
 
 # Control line per mode: [Styling: casual|semi-casual|semi-formal|formal] [Structure: prose|lists]
 # [Context: general|email]. S1-mini only makes a list for 3+ items, so `lists` is safe outside chat and email.
@@ -394,12 +588,13 @@ s1_control_line() {
 # Prints the S1-mini cleanup, or fails (non-zero) so the caller can fall back to raw text.
 refine_s1() {
   local raw="$1" out max_tokens
-  s1_start || return 1
+  srv_start s1-server || return 1
   # Output is about as long as the input; the cap stops a runaway generation.
   max_tokens=$(($(word_count "$raw") * 3 + 100))
   out="$(S1_SYS="$S1_SYSTEM_PROMPT" S1_USER="$(s1_control_line)"$'\n'"$raw" S1_MAX="$max_tokens" perl -MJSON::PP -e '
+      my ($system, $user) = ($ENV{S1_SYS}, $ENV{S1_USER}); utf8::decode($system); utf8::decode($user);
       print JSON::PP->new->utf8->encode({
-        messages => [{role => "system", content => $ENV{S1_SYS}}, {role => "user", content => $ENV{S1_USER}}],
+        messages => [{role => "system", content => $system}, {role => "user", content => $user}],
         temperature => 0, max_tokens => 0 + $ENV{S1_MAX},
       });' |
     curl -s --fail --max-time "$S1_TIMEOUT" -H 'Content-Type: application/json' --data-binary @- \
@@ -407,30 +602,11 @@ refine_s1() {
     perl -MJSON::PP -0777 -ne '
       my $content = JSON::PP->new->utf8->decode($_)->{choices}[0]{message}{content} // "";
       $content =~ s#<think>.*?</think>##s;
+      binmode STDOUT, ":encoding(UTF-8)";
       print $content;')" || return 1
-  touch "$S1_USED_FILE"
+  touch "$(srv_file s1-server used)"
   [[ -n "$(trim "$out")" ]] || return 1
   printf '%s' "$out"
-}
-
-cmd_s1_server() {
-  case "${1:-status}" in
-    start)
-      [[ "${2:-}" == --keep ]] && touch "$S1_KEEP_FILE"
-      s1_installed || { echo "S1-mini is not installed (run scripts/install.sh)" >&2; exit 1; }
-      s1_start || exit 1
-      ;;
-    release) rm -f "$S1_KEEP_FILE" ;; # the idle timer stops it later
-    stop) s1_stop ;;
-    watch) s1_watch "${2:?}" ;;
-    status)
-      if ! s1_installed; then echo missing
-      elif s1_running; then echo running
-      else echo stopped
-      fi
-      ;;
-    *) echo "usage: dictate.sh s1-server start [--keep] | release | stop | status" >&2; exit 2 ;;
-  esac
 }
 
 paste_text() {
@@ -495,7 +671,8 @@ refine_text() {
         try_s1 s1 || REFINE_STATUS="failed-fallback-raw"
       fi
     else
-      if is_offline; then
+      # A pre-started process means the online check already passed when recording started.
+      if [[ -n "${PRESTART_OFFLINE:-}" ]] || { [[ -z "${PRESTART_PID:-}" ]] && is_offline; }; then
         log "OFFLINE skipping Claude"
         REFINE_STATUS="failed-fallback-raw"
       else
@@ -508,7 +685,7 @@ refine_text() {
         fi
         CLAUDE_MS=$(($(now_ms) - t0))
       fi
-      if [[ "$REFINE_STATUS" == failed-fallback-raw && "$S1_FALLBACK" == on && "$MODE" != code ]] && s1_installed; then
+      if [[ "$REFINE_STATUS" == failed-fallback-raw && "$S1_FALLBACK" == on && "$MODE" != code ]] && srv_installed s1-server; then
         try_s1 s1-fallback || true
       fi
     fi
@@ -518,6 +695,7 @@ refine_text() {
 
 # Runs whisper + cleanup on a WAV. Sets RESULT, RAW_TEXT and TIMINGS.
 process_wav() {
+  claude_prestart # starts while Whisper runs
   transcribe_wav "$1" || return 1
   refine_text
   TIMINGS="audio=${DURATION}s whisper=${WHISPER_MS}ms claude=${CLAUDE_MS}ms s1=${S1_MS}ms refine=$REFINE_STATUS"
@@ -534,7 +712,7 @@ log_result() {
 stop_and_process() {
   local t_stop t_end
   stop_recorder || { log "STOP ignored, not recording"; return 0; }
-  trap 'rm -f "$WAV"' EXIT
+  trap 'rm -f "$WAV"; claude_cleanup' EXIT
   sound Pop
   t_stop="$(now_ms)"
 
@@ -555,6 +733,7 @@ stop_and_process() {
 run_file() {
   local wav="$1" t0
   [[ -f "$wav" ]] || { echo "No such file: $wav" >&2; exit 1; }
+  trap claude_cleanup EXIT
   t0="$(now_ms)"
   if ! process_wav "$wav"; then
     echo "(no speech)" >&2
@@ -576,6 +755,9 @@ cmd_transcribe() {
 # App stage 2: clean up stdin and print it. Exit 3 means cleanup failed and the raw text was printed;
 # exit 4 means Claude was unavailable and S1-mini cleaned it up.
 cmd_refine() {
+  # The app runs this when recording starts and writes the transcript later: Claude starts in the meantime.
+  trap claude_cleanup EXIT
+  claude_prestart
   RAW_TEXT="$(cat)"
   [[ -n "$RAW_TEXT" ]] || return 0
   refine_text
@@ -609,8 +791,8 @@ main() {
     selftest) selftest ;;
     transcribe) cmd_transcribe "${2:?usage: dictate.sh transcribe <wav>}" ;;
     refine) cmd_refine ;;
-    s1-server) cmd_s1_server "${@:2}" ;;
-    -h | --help | help) sed -n '2,15p' "$0" | sed 's/^# \{0,1\}//' ;;
+    s1-server | whisper-server) cmd_server "$cmd" "${@:2}" ;;
+    -h | --help | help) sed -n '2,16p' "$0" | sed 's/^# \{0,1\}//' ;;
     *) echo "Unknown command: $cmd" >&2; exit 2 ;;
   esac
 }

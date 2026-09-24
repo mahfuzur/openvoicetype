@@ -1,6 +1,7 @@
 import Carbon
 
 /// A system-wide hotkey via Carbon's RegisterEventHotKey (needs no Accessibility permission).
+/// Reports key presses and, for hold-to-talk, key releases.
 final class HotKey {
     struct Combo: Equatable {
         let keyCode: UInt32
@@ -17,7 +18,7 @@ final class HotKey {
 
     static let escape = Combo(keyCode: UInt32(kVK_Escape), modifiers: 0, label: "Esc")
 
-    private static var handlers: [UInt32: () -> Void] = [:]
+    private static var handlers: [UInt32: (press: () -> Void, release: (() -> Void)?)] = [:]
     private static var nextID: UInt32 = 1
     private static var handlerInstalled = false
 
@@ -25,7 +26,7 @@ final class HotKey {
     private let id: UInt32
 
     /// Returns nil if the combo is already taken by another app.
-    init?(_ combo: Combo, handler: @escaping () -> Void) {
+    init?(_ combo: Combo, onRelease: (() -> Void)? = nil, handler: @escaping () -> Void) {
         HotKey.installHandlerIfNeeded()
         id = HotKey.nextID
         HotKey.nextID += 1
@@ -33,7 +34,7 @@ final class HotKey {
         let status = RegisterEventHotKey(combo.keyCode, combo.modifiers, hotKeyID,
                                          GetApplicationEventTarget(), 0, &ref)
         guard status == noErr, ref != nil else { return nil }
-        HotKey.handlers[id] = handler
+        HotKey.handlers[id] = (handler, onRelease)
     }
 
     deinit { unregister() }
@@ -47,13 +48,20 @@ final class HotKey {
     private static func installHandlerIfNeeded() {
         guard !handlerInstalled else { return }
         handlerInstalled = true
-        var spec = EventTypeSpec(eventClass: OSType(kEventClassKeyboard), eventKind: UInt32(kEventHotKeyPressed))
+        var specs = [
+            EventTypeSpec(eventClass: OSType(kEventClassKeyboard), eventKind: UInt32(kEventHotKeyPressed)),
+            EventTypeSpec(eventClass: OSType(kEventClassKeyboard), eventKind: UInt32(kEventHotKeyReleased)),
+        ]
         InstallEventHandler(GetApplicationEventTarget(), { _, event, _ in
             var hotKeyID = EventHotKeyID()
             GetEventParameter(event, EventParamName(kEventParamDirectObject), EventParamType(typeEventHotKeyID),
                               nil, MemoryLayout<EventHotKeyID>.size, nil, &hotKeyID)
-            DispatchQueue.main.async { HotKey.handlers[hotKeyID.id]?() }
+            let released = GetEventKind(event) == UInt32(kEventHotKeyReleased)
+            DispatchQueue.main.async {
+                guard let handler = HotKey.handlers[hotKeyID.id] else { return }
+                if released { handler.release?() } else { handler.press() }
+            }
             return noErr
-        }, 1, &spec, nil, nil)
+        }, specs.count, &specs, nil, nil)
     }
 }

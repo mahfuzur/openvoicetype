@@ -35,7 +35,7 @@ post-processing, rich paste, and the eval harness (`evals/`). Eval: 30% → **10
 | ~~Lists come out inline~~ (fixed in M2) | "make a grocery list 1 kg banana 1 kg apple…" became "Make a grocery list: 1 kg banana, 1 kg apple, …" |
 | ~~Long dictations come out as one paragraph~~ (fixed in M2) | An 81 s dictation produced a single block of text |
 | ~~Names are misheard~~ (dictionary, M2) | "Claude" was transcribed as "cloud" |
-| Too slow compared with other tools | 6–10 s, versus about 1–3 s for Wispr Flow and VoiceInk |
+| Too slow compared with other tools (improved in M3) | Was 6–10 s; now about 3–5 s with Claude and 1.5 s with S1-mini, versus about 1–3 s for Wispr Flow and VoiceInk |
 
 ## Roadmap
 
@@ -43,8 +43,8 @@ post-processing, rich paste, and the eval harness (`evals/`). Eval: 30% → **10
 |---|---|---|---|---|
 | M1 | Floating overlay with animations | 1–2 days | ✅ Done (2026-09-23) | You can see when it's listening and working |
 | M2 | Formatting quality | 2 days | ✅ Done (2026-09-23) | Lists, paragraphs, spoken commands, app-aware style |
-| M2.5 | Offline cleanup with S1-mini | 1–2 days | Built (2026-09-24), needs a Wi-Fi-off test | Works with no internet; a fully on-device option |
-| M3 | Native pipeline and speed | 3–4 days | Not started | Around 2–3 s total, needed before a public release |
+| M2.5 | Offline cleanup with S1-mini | 1–2 days | ✅ Done (2026-09-24) | Works with no internet; a fully on-device option |
+| M3 | Native pipeline and speed | 3–4 days | ✅ Done (2026-09-24): about 2× faster; ≤ 3 s for short dictations | Around 2–3 s total, needed before a public release |
 | M4 | Settings window and providers | 4–5 days | Not started | Turns it into a platform: pick Claude, Codex, Gemini, Ollama or an API |
 | M5 | Open-source release | 2–3 days | Partly done (license, CI, docs) | Name, license, CI, signing, docs |
 
@@ -200,20 +200,20 @@ dropped items. Good enough as a fallback; Claude stays the default for quality.
 
 ## M3: Native pipeline and speed
 
-Target: **≤ 3 s** from stopping to pasted text, for 15 s of speech.
+> **Detailed plan and task tracking:** [plans/M3-speed.md](plans/M3-speed.md)
 
-| Stage | Now | Change | Expected |
+Target: **≤ 3 s** from stopping to pasted text, for 15 s of speech (**≤ 1.5 s** with S1-mini). Measured on 2026-09-24:
+
+| Stage | Now | Change | Measured in the spike |
 |---|---|---|---|
-| Recording | `rec` child process | Swift `AVAudioEngine` (from M1) | No change |
-| Whisper | 2–4 s (loads 1.6 GB on every call) | The app launches and supervises `whisper-server`, keeping the model warm; the app posts audio to it over HTTP | < 1 s |
-| Claude | 4–8 s (CLI starts every time) | Keep one `claude -p --input-format stream-json --output-format stream-json` running and send each transcript to it; restart it every N dictations | About 1.5–3 s (to be measured) |
-| Paste | < 0.3 s | No change | No change |
+| Recording | Swift `AVAudioEngine` (M1) | No change | |
+| Whisper | 1.6–2.0 s (loads 1.6 GB on every call) | `whisper-server` kept loaded, started on hotkey press, stopped when idle | 0.8–0.9 s |
+| Claude | 3.4–4.1 s (CLI starts every time) | A `claude -p --input-format stream-json` process **started when recording starts** and used for one dictation only | about 1.0 s |
+| Paste | < 0.3 s | No change | |
 
-Other work:
-- Swift `Transcriber` and `Refiner` protocols replace the bundled bash script. The script stays as a CLI for power users.
-- **Push-to-talk:** Carbon's `kEventHotKeyReleased` lets holding the key record and releasing it stop, with no extra permission.
-  This is offered alongside toggle mode.
-- Check memory use: the turbo model takes about 1.6 GB of RAM. Offer to unload it after N minutes idle.
+- A persistent multi-dictation Claude session was just as fast, but kept every earlier transcript in its history, so it was rejected.
+- **Push-to-talk** (Carbon key release) alongside toggle mode, plus an `APP TIMING` log line per dictation.
+- The bash pipeline stays: both wins come from keeping processes warm. The Swift `Transcriber`/`Refiner` protocols move to M4.
 
 ## M4: Settings window and providers ("platform")
 
@@ -288,5 +288,6 @@ These are the two features, from comparing with Wispr Flow and Typeless, that ar
 
 ## Next step
 
-M2.5: S1-mini offline cleanup. Then M3: speed (whisper-server with the model kept loaded, a persistent Claude session),
-aiming for ≤ 3 s end to end.
+M3 is done (see [plans/M3-speed.md](plans/M3-speed.md)): about twice as fast. Real dictations take 2.7 s (8 s of speech) to
+3.5–5.7 s (17–22 s of speech), from 6–9 s before; S1-mini takes about 1.5 s. What's left is Claude generating the text; the
+plan lists ideas for later. Next: M4 (settings window and providers) or a v0.1 release (M5).

@@ -75,6 +75,15 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         set { defaults.set(newValue, forKey: "inputDeviceUID"); dictation.inputDeviceUID = newValue }
     }
     private var hotKeyLabel: String { HotKey.presets[hotKeyIndex].label }
+    /// Hold to talk: hold the hotkey while speaking and release it to finish. Off = press to start and to stop.
+    private var holdToTalk: Bool {
+        get { defaults.bool(forKey: "holdToTalk") }
+        set { defaults.set(newValue, forKey: "holdToTalk") }
+    }
+    /// When the hotkey went down in hold-to-talk mode.
+    private var holdStartedAt: Date?
+    /// Set when a hold-to-talk press was too short, so the overlay explains instead of saying "Cancelled".
+    private var showHoldHint = false
 
     func applicationDidFinishLaunching(_ notification: Notification) {
         guard let script = Bundle.main.url(forResource: "dictate", withExtension: "sh") else {
@@ -128,13 +137,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     }
 
     func applicationWillTerminate(_ notification: Notification) {
-        dictation?.stopS1Server()
+        dictation?.shutDown()
     }
 
     // MARK: - S1-mini server
 
     private func refreshS1Status() {
-        dictation.s1Server(["status"]) { [weak self] _, output in
+        dictation.server("s1-server", ["status"]) { [weak self] _, output in
             self?.s1Installed = output.trimmingCharacters(in: .whitespacesAndNewlines) != "missing"
         }
     }
@@ -142,7 +151,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     /// Keeps S1-mini loaded while it's the selected cleanup; otherwise lets it stop after idling
     /// (a Claude fallback starts it on demand).
     private func updateS1Server() {
-        dictation.s1Server(usesS1 ? ["start", "--keep"] : ["release"])
+        dictation.server("s1-server", usesS1 ? ["start", "--keep"] : ["release"])
     }
 
     /// Records 2 s from the selected mic and writes a one-line report (for development: checks that
@@ -237,7 +246,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
 
     private func finished(_ outcome: Dictation.Outcome) {
         switch outcome {
-        case .text(let text, let cleanupFailed, let offlineFallback, let context):
+        case .text(let text, let cleanupFailed, let offlineFallback, let context, let timing):
             lastResult = text
             // Rich text only helps where lists render; terminals and editors get plain text.
             let html = richPaste && context.mode != .code && RichText.containsList(text)
@@ -255,11 +264,19 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
             }
             AppLog.write("RESULT \(pasted ? "pasted" : "copied") mode=\(context.mode.rawValue) app=\"\(context.appName)\" "
                 + "chars=\(text.count) rich=\(html != nil) cleanupFailed=\(cleanupFailed) offlineFallback=\(offlineFallback)")
+            let total = Int(Date().timeIntervalSince(timing.stoppedAt) * 1000)
+            AppLog.write("TIMING stop→transcript=\(timing.transcribeMs)ms transcript→cleaned=\(timing.cleanupMs)ms "
+                + "cleaned→pasted=\(total - timing.transcribeMs - timing.cleanupMs)ms total=\(total)ms "
+                + "prestarted=\(timing.prestarted) mode=\(context.mode.rawValue)")
             overlay.finish(.success(label), after: pasted ? 0.9 : 2.5)
         case .noSpeech:
             AppLog.write("RESULT no-speech")
             play("Funk")
             overlay.finish(.message("No speech detected", isError: false), after: 1.6)
+        case .cancelled where showHoldHint:
+            showHoldHint = false
+            AppLog.write("RESULT cancelled (hold-to-talk tap)")
+            overlay.finish(.message("Hold \(hotKeyLabel) while you speak", isError: false), after: 1.4)
         case .cancelled:
             AppLog.write("RESULT cancelled")
             play("Funk")
@@ -294,9 +311,32 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
 
     private func registerHotKey() {
         hotKey = nil
-        hotKey = HotKey(HotKey.presets[hotKeyIndex]) { [weak self] in self?.dictation.toggle() }
+        hotKey = HotKey(HotKey.presets[hotKeyIndex], onRelease: { [weak self] in self?.hotKeyReleased() }) { [weak self] in
+            self?.hotKeyPressed()
+        }
         if hotKey == nil {
             notify("\(hotKeyLabel) is used by another app. Pick a different hotkey from the menu.")
+        }
+    }
+
+    private func hotKeyPressed() {
+        guard holdToTalk else { return dictation.toggle() }
+        guard dictation.state == .idle else { return }
+        holdStartedAt = Date()
+        dictation.start()
+    }
+
+    /// Hold to talk: releasing the hotkey stops and pastes. A press under 0.3 s is treated as an accidental tap.
+    private func hotKeyReleased() {
+        guard holdToTalk, let started = holdStartedAt else { return }
+        holdStartedAt = nil
+        if Date().timeIntervalSince(started) < 0.3 {
+            showHoldHint = true
+            dictation.cancel()
+        } else if dictation.state == .recording {
+            dictation.stop()
+        } else {
+            dictation.cancel() // released before the mic was ready: nothing useful was recorded
         }
     }
 
@@ -306,9 +346,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         menu.removeAllItems()
 
         let status: String = switch dictation.state {
-        case .idle: "Ready. Press \(hotKeyLabel) to dictate"
+        case .idle: "Ready. \(holdToTalk ? "Hold" : "Press") \(hotKeyLabel) to dictate"
         case .starting: "Starting \(dictation.deviceName)…"
-        case .recording: "Recording… \(hotKeyLabel) to finish, Esc to cancel"
+        case .recording: "Recording… \(holdToTalk ? "Release" : "Press") \(hotKeyLabel) to finish, Esc to cancel"
         case .testingMic: "Testing \(dictation.deviceName)…"
         case .transcribing: "Transcribing…"
         case .polishing: usesS1 ? "Polishing with S1-mini…" : "Polishing with Claude…"
@@ -344,7 +384,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
             entry.tag = index
             hotKeyMenu.addItem(entry)
         }
-        menu.addItem(submenu("Hotkey: \(hotKeyLabel)", hotKeyMenu))
+        hotKeyMenu.addItem(.separator())
+        hotKeyMenu.addItem(item("Press to Start and Stop", #selector(selectToggleMode), checked: !holdToTalk))
+        hotKeyMenu.addItem(item("Hold to Talk", #selector(selectHoldToTalk), checked: holdToTalk))
+        menu.addItem(submenu("Hotkey: \(hotKeyLabel)\(holdToTalk ? " (hold)" : "")", hotKeyMenu))
         menu.addItem(microphoneMenuItem())
 
         menu.addItem(.separator())
@@ -586,6 +629,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         cleanupEngine = "claude"
         updateS1Server()
     }
+
+    @objc private func selectToggleMode() { holdToTalk = false }
+    @objc private func selectHoldToTalk() { holdToTalk = true }
 
     @objc private func selectHotKey(_ sender: NSMenuItem) {
         hotKeyIndex = sender.tag

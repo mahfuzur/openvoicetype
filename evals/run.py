@@ -6,9 +6,11 @@ which tests the cleanup layer on its own. With --e2e: synthesizes the case's `sa
 then runs `dictate.sh transcribe` + `refine`, which tests Whisper, cleanup and post-processing together.
 
 Usage:
-  evals/run.py [--model haiku|sonnet] [--cleanup claude|s1] [--case ID ...] [--e2e] [--runs N] [--jobs N] [--show]
+  evals/run.py [--model haiku|sonnet] [--cleanup claude|s1] [--case ID ...] [--e2e [--timing]] [--runs N] [--jobs N] [--show]
 
 --cleanup s1 evaluates S1-mini (offline, through llama-server) instead of Claude.
+--e2e runs like the app: `refine` is started before the speech is synthesized (its Claude starts meanwhile), then the
+transcript from whisper-server is fed to it. --timing prints the median time of each stage after "recording stops".
 """
 import argparse
 import concurrent.futures as futures
@@ -109,19 +111,32 @@ def run_case(case, args, log_file):
     env = case_env(case, args, log_file)
     started = time.time()
     raw = case["input"]
+    stages = {}
     if args.e2e:
         if "say" not in case:
             return {"id": case["id"], "skipped": True}
+        # Like the app: start `refine` when "recording" starts; synthesizing the speech stands in for the recording.
+        refine = subprocess.Popen(["/bin/bash", str(SCRIPT), "refine"], stdin=subprocess.PIPE, stdout=subprocess.PIPE,
+                                  stderr=subprocess.DEVNULL, text=True, env=env)
         with tempfile.TemporaryDirectory() as directory:
             wav = synthesize(case["say"], directory)
+            stopped = time.time()
             _, raw = run_script(["transcribe", str(wav)], env=env)
-    code, output = run_script(["refine"], text=raw, env=env)
+        transcribed = time.time()
+        output, _ = refine.communicate(raw, timeout=90)
+        code, output = refine.returncode, output.strip()
+        cleaned = time.time()
+        stages = {"transcribe_ms": round((transcribed - stopped) * 1000),
+                  "cleanup_ms": round((cleaned - transcribed) * 1000),
+                  "total_ms": round((cleaned - stopped) * 1000)}
+    else:
+        code, output = run_script(["refine"], text=raw, env=env)
     elapsed = time.time() - started
     failures = check(output, case.get("checks", {}))
     if code == 3:
         failures.insert(0, "cleanup failed (fell back to raw text)")
     return {"id": case["id"], "mode": case.get("mode", "default"), "raw": raw, "output": output,
-            "seconds": round(elapsed, 2), "failures": failures, "passed": not failures}
+            "seconds": round(elapsed, 2), "failures": failures, "passed": not failures, **stages}
 
 
 def main():
@@ -133,6 +148,7 @@ def main():
     parser.add_argument("--runs", type=int, default=1, help="repeat each case (flakiness check)")
     parser.add_argument("--jobs", type=int, default=0, help="parallel cases (default 4, or 2 with --e2e)")
     parser.add_argument("--show", action="store_true", help="print every output, not just failures")
+    parser.add_argument("--timing", action="store_true", help="with --e2e: median time of each stage after stop")
     args = parser.parse_args()
 
     cases = json.loads(CASES.read_text())
@@ -174,6 +190,10 @@ def main():
     report.write_text(json.dumps({"model": engine, "e2e": args.e2e, "passed": passed,
                                   "total": len(results), "median_seconds": median,
                                   "results": results}, indent=2))
+    if args.e2e and args.timing and results:
+        for stage in ("transcribe_ms", "cleanup_ms", "total_ms"):
+            values = [r[stage] for r in results if stage in r]
+            print(f"  {stage:14} median {statistics.median(values):6.0f} ms   (min {min(values)}, max {max(values)})")
     print(f"report: {report.relative_to(ROOT)}")
     sys.exit(0 if passed == len(results) else 1)
 

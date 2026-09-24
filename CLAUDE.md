@@ -12,7 +12,7 @@ See [docs/ROADMAP.md](docs/ROADMAP.md) (the phased roadmap, which is the source 
 
 ```
 hotkey -> record (AVAudioEngine in the app, or sox/rec from the CLI; 16 kHz mono WAV)
-       -> transcribe (whisper.cpp, ggml-large-v3-turbo, fully local)
+       -> transcribe (whisper-server kept loaded, whisper-cli fallback; ggml-large-v3-turbo, fully local)
        -> clean up (claude -p, subscription auth; offline or on failure: S1-mini via local llama-server)
        -> post-process (dictionary, output filter) -> paste (CGEvent Cmd+V, clipboard restored)
 ```
@@ -85,12 +85,30 @@ claude -p --model haiku --tools "" --strict-mcp-config --no-session-persistence 
   go to `evals/results/` (gitignored). Run it after every prompt or post-processing change; the target is ≥ 90% on Haiku.
   Add real failing dictations from `dictate.log` as new cases.
 
-## Latency notes
+## Latency (M3, see docs/plans/M3-speed.md)
 
-- Keeping the model loaded with `whisper-server` avoids reloading 1.6 GB on every call. Prefer it over `whisper-cli` once past the POC.
-- Claude CLI startup is the main cost. Optimizations to try, in order: haiku model, stripped flags as above,
-  then a long-lived `claude -p --input-format stream-json --output-format stream-json` process reused across dictations.
-- Measure every stage (record stop -> transcript -> cleaned -> pasted) and log the timings.
+- Stop → pasted, real dictations: about 2.7 s (8 s of speech) to 3.5–5.7 s (17–22 s) with Claude, about 1.5 s with S1-mini
+  (was 6–9 s). What's left is Claude generating the text. Measure with `evals/run.py --e2e --timing --jobs 1` (short
+  sentences, so it reads lower, about 2.5 s); the app logs `APP TIMING …` for every dictation.
+- **whisper-server** (`dictate.sh whisper-server start|release|stop|status`, port `WHISPER_PORT` 8179) shares the server helper
+  (`srv_*` in `dictate.sh`) with S1-mini: pid/keep/used/lock files in `$STATE_DIR`, a detached idle watchdog
+  (`WHISPER_IDLE_MINUTES`). `transcribe_server()` posts to `/inference` with the same prompt; `whisper-cli` is the fallback.
+  The app and `dictate.sh start` load it when recording starts (0.6 s). About 1.9 GB RSS.
+- **Pre-started Claude:** `claude_prestart()` launches `claude -p --input-format stream-json --output-format stream-json --verbose`
+  (same flags as the one-shot call) with its stdin on a fifo held open as fd 3, *before* the transcript exists. The app runs
+  `dictate.sh refine` when recording starts and writes the transcript to its stdin on stop; `claude_send()` writes one user message
+  and polls the output file for the `result` event. One process per dictation: a reused session was just as fast but kept every
+  earlier transcript in its history. Cancel or no speech = close stdin with nothing; the script and its Claude exit.
+- **Gotcha:** Claude Code exports `CLAUDE_PID` to the commands it runs. Never use `CLAUDE_*` names for the script's own state;
+  the pre-start uses `PRESTART_PID`/`PRESTART_DIR`, reset at startup. An inherited pid once made the cleanup kill the
+  developer's Claude Code session.
+- Fds passed to detached servers: launch them with `3>&-` so they don't hold a pre-started Claude's stdin open.
+- `claude_send()` doesn't just wait for the timeout. A non-JSON line or a process that died without output returns 2, and
+  `refine()` retries with the one-shot call (a Claude Code update changed the stream). No event within 5 s, or an error
+  `result`, returns 1, and cleanup falls back to S1-mini or raw text. An `assistant` answer with no `result` within 1.5 s is
+  used as-is. Deadlines use `now_ms`, not loop counts (each check costs about 30 ms). Test with a fake `CLAUDE_BIN`.
+- `srv_running()` also checks the pid's command name (`llama-server` / `whisper-server`), so a stale pid file can never
+  make `stop` kill an unrelated process that reused the pid.
 
 ## Commands
 
@@ -105,7 +123,8 @@ claude -p --model haiku --tools "" --strict-mcp-config --no-session-persistence 
 ## App architecture (current)
 
 The menu-bar app (`app/Sources/VoiceToText/`) records in-process and runs `dictate.sh` for transcribing and cleanup:
-- `HotKey.swift`: Carbon global hotkey. Needs no permission. Esc cancels, and is registered only while recording.
+- `HotKey.swift`: Carbon global hotkey (press and release events). Needs no permission. Esc cancels, and is registered only
+  while recording. Hold to Talk (menu) starts on press and stops on release; a press under 0.3 s is treated as a tap.
 - `Recorder.swift`: `AVAudioEngine` tap, converted to a 16 kHz mono 16-bit WAV in `$TMPDIR/voice-to-text/`,
   plus a 0–1 input level for each buffer (drives the waveform). Starting is asynchronous: `onReady` fires on the
   first buffer, and starting retries for about 2 s because Bluetooth mics report no format while switching to headset (HFP) mode.
@@ -120,7 +139,9 @@ The menu-bar app (`app/Sources/VoiceToText/`) records in-process and runs `dicta
   sample rate. If the mic fails after audio was captured, the recording is kept and transcribed.
   Mic events are written to `dictate.log` as `APP MIC …` lines.
 - `AudioDevices.swift`: Core Audio input-device list (UID, name, Bluetooth flag) and the default input.
-- `Dictation.swift`: the state machine (idle, recording, transcribing, polishing). It runs `dictate.sh transcribe <wav>`, then
+- `Dictation.swift`: the state machine (idle, recording, transcribing, polishing). On start it runs `dictate.sh whisper-server start`
+  and launches `dictate.sh refine` (a `ScriptRun`, stdin kept open) for the frontmost app's mode; if the mode changed by the
+  time you stop, that run is dropped and a fresh one is used. It runs `dictate.sh transcribe <wav>`, then
   `dictate.sh refine` (transcript on stdin; exit 3 means the raw text was used, exit 4 means S1-mini replaced an unavailable Claude),
   with `VTT_QUIET=on`, `VTT_REFINE`, `VTT_CLEANUP`, `VTT_S1_FALLBACK`
   and `VTT_CLAUDE_MODEL`. `VTT_*` variables override `config.sh`.
