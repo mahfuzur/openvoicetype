@@ -172,7 +172,7 @@ still sees `/opt/homebrew`. Paste and the microphone are checked on real hardwar
 | ID | Result |
 |---|---|
 | S1 | **Pass.** `build-deps.sh` builds all three in about 2 minutes with Command Line Tools + `cmake`; only system libraries are linked. Speed matches Homebrew: whisper-server 0.81–0.84 s per request, S1-mini 0.08–0.09 s warm, same transcripts and output. **But** the first launch compiles the Metal shaders: 10 s (Whisper) and 19 s (llama.cpp). macOS then caches them (0.3–0.6 s, faster than Homebrew's 0.8–1.1 s), per binary, so every re-signed build pays it once. Handled by warming both servers after a download or an update, and a 30 s start timeout. Two build notes: Homebrew's `ccache` was broken on this Mac (`GGML_CCACHE=OFF`), and Accelerate's BLAS needs macOS 13.3, so the minimum version is now 13.3. The Command Line Tools SDK here is 14.2, which doesn't declare one Metal method ggml uses for multi-GPU events; it isn't used with one GPU, but test on macOS 13/14 (M4.11). |
-| S2 | **Half done.** The self-signed release certificate from CI secrets works: the designated requirement is `identifier "io.github.mahfuzur.voicetotext" and certificate leaf = H"…"`, which doesn't depend on the build, so permission grants should survive updates. Gatekeeper rejects the app (`spctl`: rejected, origin=Voice to Text Release), as expected without notarization. Still to do on a clean Mac: download from GitHub, Open Anyway, and an update keeping the permissions. |
+| S2 | **Found a blocker in the release review (§5d), then fixed.** The self-signed release certificate from CI secrets works: the designated requirement is `identifier "io.github.mahfuzur.voicetotext" and certificate leaf = H"…"`, which doesn't depend on the build, so permission grants should survive updates. Gatekeeper rejects the app (`spctl`: rejected, origin=Voice to Text Release), as expected without notarization. Still to do on a clean Mac: download from GitHub, Open Anyway, and an update keeping the permissions. |
 | S3 | **Decided without a live test:** `claude auth login --claudeai` opens a browser and may ask to paste a code, so it runs in Terminal (a `.command` file). It wasn't run here because it would change this Mac's login. `claude auth status --json` works (`loggedIn`, `subscriptionType`). |
 | S4 | **Pass.** e2e eval, 2 runs each: full 10/12, compressed 10/12, the same failing case (email addresses), with near-identical transcripts ("March 3rd" vs "March 3"). whisper-server 0.84 s either way, **750 MB** of memory instead of 1.7 GB. The compressed model is the default for new users; existing installs keep the full one. |
 
@@ -190,7 +190,7 @@ still sees `/opt/homebrew`. Paste and the microphone are checked on real hardwar
 | M4.8 | First-run setup: move to Applications, microphone, Accessibility, model, cleanup, try it | ☑ Built and rendered; not yet run on a clean Mac |
 | M4.9 | Short menu; "Update Available" check against GitHub Releases | ☑ |
 | M4.10 | Release: versioning from the tag, DMG, release certificate signing, optional notarization, `release.yml`, third-party licenses | ☑ `release.sh` tested locally with both the local identity and a throwaway release certificate; `release.yml` runs on the first tag |
-| M4.11 | Clean-install test in a VM: DMG → Open Anyway → setup → dictation with S1-mini → install Claude → dictation with Claude → update to a new build keeps permissions | ☐ Needs a clean Mac or VM, and a real download |
+| M4.11 | Clean-install test in a VM: DMG → Open Anyway → setup → dictation with S1-mini → install Claude → dictation with Claude → update to a new build keeps permissions | ◐ The release DMG built with `release.sh` and the release certificate installs and works on the development Mac; still to do: a real download on a second Mac |
 | M4.12 | Docs: README (download and install, Open Anyway, what's downloaded and why), CLAUDE.md, ROADMAP, CHANGELOG, overlay and setup screenshots | ☑ Plus a README logo header and screenshots, and [docs/ARTWORK.md](../ARTWORK.md) |
 | M4.13 | Artwork (added in review): app icon, DMG window, menu-bar icon | ☑ See §5c |
 
@@ -213,6 +213,24 @@ Trying the first build led to these changes; the design is documented in [docs/A
 | **Servers restart when their binary changes**, not only their model | After an update or a move, servers from the old copy kept running (even from a deleted copy) and were reused |
 | **Shader warm-up also after a move** (the check includes the app's path) | The Metal shader cache is per location, so moving the app from the DMG to Applications meant a slow first dictation |
 | Downloaded models get normal permissions (0644) | `URLSession` leaves them owner-only (0600), unlike the other model files |
+
+## 5d. Release-readiness review (2026-09-24)
+
+Before tagging v0.1.0: a dry run of `release.sh` with the real release certificate (passed), a simulated new user (an empty
+home folder via `CFFIXED_USER_HOME`), a scan of the repository for personal data (clean), a simulated download, and an
+independent code review of the app. Fixed:
+
+| Severity | Problem | Fix |
+|---|---|---|
+| **Blocker** | In a downloaded DMG every helper is quarantined. Open Anyway approves the app only, so running `whisper-server` hung in Gatekeeper's check (confirmed: a quarantined copy hung, an unquarantined one ran in 0.03 s). The app can't clear the flag in its own bundle (App Management) | `BundledHelpers` copies the helpers to Application Support at launch and runs them from there |
+| **Blocker** | A resumed download finishes with HTTP 206, which was treated as a failure, so resuming never worked | Any 2xx is success; retries reset per download; the progress bar stays up while it waits to resume |
+| Should-fix | Closing a window while the hotkey recorder waited left the hotkey unregistered and swallowed keys | One shared recorder that stops on window close or resign-key |
+| Should-fix | Move and Reopen quit even when the copy didn't open | It quits only once the copy is running; otherwise it shows the error |
+| Should-fix | Running setup again could switch an existing user to S1-mini | Setup only chooses the engine before setup is completed |
+| Should-fix | S1-mini could be deleted while it was the cleanup engine | No delete button while it's in use |
+| Minor | The Claude check could hang on a shell profile's background program; nvm, Volta, npm-global, Bun installs and non-zsh login shells weren't found; an offline install looked like success | Output to a file with a hard timeout; the user's own shell and those folders; the installer is downloaded first |
+| Minor | A hotkey like ⌘V or ⌘Q could be recorded | Hotkeys need ⌃ or ⌥, or a function key |
+| Minor | A model downloaded from its own row wasn't selected; the mic list went stale; the setup window could be taller than a small screen; cancelling during the checksum check still installed the file | Each fixed |
 
 ## 6. Risks
 

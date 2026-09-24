@@ -147,52 +147,59 @@ struct ClaudeStatusView: View {
     }
 }
 
-/// Click, then press the new key combination. Esc cancels.
+/// Click, then press the new key combination. Esc cancels, and so does leaving the window.
 struct HotKeyRecorder: View {
     @ObservedObject private var settings = AppSettings.shared
-    @State private var monitor: Any?
-    @State private var hint: String?
+    @ObservedObject private var capture = HotKeyCapture.shared
 
     var body: some View {
         HStack {
-            Button(action: toggle) {
+            Button(action: { settings.isRecordingHotKey ? capture.stop() : capture.start() }) {
                 Text(settings.isRecordingHotKey ? "Press a shortcut…" : settings.hotKey.label)
                     .frame(minWidth: 120)
             }
             if settings.hotKey != HotKey.Combo.defaultCombo && !settings.isRecordingHotKey {
                 Button("Reset") { settings.hotKey = HotKey.Combo.defaultCombo }.buttonStyle(.link)
             }
-            if let text = hint ?? settings.hotKeyError {
-                Text(text).font(.caption).foregroundColor(settings.hotKeyError != nil ? .red : .secondary)
+            if let text = capture.hint ?? settings.hotKeyError {
+                Text(text).font(.caption).foregroundColor(settings.hotKeyError != nil && capture.hint == nil ? .red : .secondary)
             }
         }
-        .onDisappear(perform: stop)
+        // onDisappear doesn't fire when an AppKit window closes, so stop on the window events instead.
+        .onReceive(NotificationCenter.default.publisher(for: NSWindow.willCloseNotification)) { _ in capture.stop() }
+        .onReceive(NotificationCenter.default.publisher(for: NSWindow.didResignKeyNotification)) { _ in capture.stop() }
     }
+}
 
-    private func toggle() {
-        settings.isRecordingHotKey ? stop() : start()
-    }
+/// The one key monitor behind every hotkey recorder (Settings and setup can both be open).
+final class HotKeyCapture: ObservableObject {
+    static let shared = HotKeyCapture()
+    @Published private(set) var hint: String?
+    private var monitor: Any?
+    private let settings = AppSettings.shared
 
-    private func start() {
+    func start() {
+        stop()
         hint = "Esc to cancel"
         settings.isRecordingHotKey = true
-        monitor = NSEvent.addLocalMonitorForEvents(matching: .keyDown) { event in
+        monitor = NSEvent.addLocalMonitorForEvents(matching: .keyDown) { [weak self] event in
+            guard let self else { return event }
             if event.keyCode == 53 && event.modifierFlags.intersection([.command, .option, .control, .shift]).isEmpty {
-                stop()
+                self.stop()
             } else if let combo = HotKey.Combo(event: event) {
-                settings.hotKey = combo
-                stop()
+                self.settings.hotKey = combo
+                self.stop()
             } else {
-                hint = "Add ⌘, ⌥ or ⌃ (or use a function key)"
+                self.hint = "Use ⌃ or ⌥ with a key (⌘ shortcuts belong to apps), or a function key"
             }
             return nil
         }
     }
 
-    private func stop() {
+    func stop() {
         if let monitor { NSEvent.removeMonitor(monitor) }
         monitor = nil
         hint = nil
-        settings.isRecordingHotKey = false
+        if settings.isRecordingHotKey { settings.isRecordingHotKey = false }
     }
 }

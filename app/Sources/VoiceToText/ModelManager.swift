@@ -77,27 +77,38 @@ final class ModelManager: NSObject, ObservableObject, URLSessionDownloadDelegate
     private var tasks: [Int: ModelFile] = [:]
     private var resumeData: [String: Data] = [:]
     private var retries: [String: Int] = [:]
+    /// Cancelled while being checked: the check finishes in the background, but the file isn't installed.
+    private var cancelled: Set<String> = []
 
     func isDownloading(_ model: ModelFile) -> Bool {
         if case .running = downloads[model.fileName] { return true }
         return downloads[model.fileName] == .verifying
     }
 
+    /// Starts (or, after a failure, resumes) a download the user asked for.
     func download(_ model: ModelFile) {
         guard !model.isInstalled, !isDownloading(model) else { return }
-        downloads[model.fileName] = .running(fraction: 0)
-        let task = resumeData.removeValue(forKey: model.fileName).map { session.downloadTask(withResumeData: $0) }
-            ?? session.downloadTask(with: model.url)
-        tasks[task.taskIdentifier] = model
-        task.resume()
+        retries[model.fileName] = 0
+        cancelled.remove(model.fileName)
+        start(model)
     }
 
     func cancel(_ model: ModelFile) {
         for (id, file) in tasks where file == model {
             session.getAllTasks { all in all.first { $0.taskIdentifier == id }?.cancel() }
         }
+        if downloads[model.fileName] == .verifying { cancelled.insert(model.fileName) }
         resumeData[model.fileName] = nil
         downloads[model.fileName] = nil
+    }
+
+    private func start(_ model: ModelFile) {
+        guard !model.isInstalled, !tasks.values.contains(model) else { return }
+        if case .running = downloads[model.fileName] {} else { downloads[model.fileName] = .running(fraction: 0) }
+        let task = resumeData.removeValue(forKey: model.fileName).map { session.downloadTask(withResumeData: $0) }
+            ?? session.downloadTask(with: model.url)
+        tasks[task.taskIdentifier] = model
+        task.resume()
     }
 
     /// Deletes the file (only the link, if it's a symlink to another app's copy).
@@ -117,7 +128,8 @@ final class ModelManager: NSObject, ObservableObject, URLSessionDownloadDelegate
 
     func urlSession(_ session: URLSession, downloadTask: URLSessionDownloadTask, didFinishDownloadingTo location: URL) {
         guard let model = tasks[downloadTask.taskIdentifier] else { return }
-        if let response = downloadTask.response as? HTTPURLResponse, response.statusCode != 200 {
+        // A resumed download ends with 206 (Partial Content) and the complete file, so any 2xx is fine.
+        if let response = downloadTask.response as? HTTPURLResponse, !(200..<300).contains(response.statusCode) {
             downloads[model.fileName] = .failed("Download failed (HTTP \(response.statusCode))")
             return
         }
@@ -135,6 +147,10 @@ final class ModelManager: NSObject, ObservableObject, URLSessionDownloadDelegate
         DispatchQueue.global(qos: .utility).async {
             let ok = Self.sha256(of: part) == model.sha256
             DispatchQueue.main.async {
+                if self.cancelled.remove(model.fileName) != nil {
+                    try? FileManager.default.removeItem(at: part)
+                    return
+                }
                 if ok, (try? FileManager.default.moveItem(at: part, to: model.path)) != nil {
                     // Downloads arrive owner-only (0600); match the other model files.
                     try? FileManager.default.setAttributes([.posixPermissions: 0o644], ofItemAtPath: model.path.path)
@@ -160,8 +176,10 @@ final class ModelManager: NSObject, ObservableObject, URLSessionDownloadDelegate
             let attempt = (retries[model.fileName] ?? 0) + 1
             retries[model.fileName] = attempt
             if attempt <= 3 {
-                downloads[model.fileName] = nil
-                DispatchQueue.main.asyncAfter(deadline: .now() + Double(attempt) * 2) { self.download(model) }
+                // The progress bar stays up while it waits to resume.
+                DispatchQueue.main.asyncAfter(deadline: .now() + Double(attempt) * 2) {
+                    if case .running = self.downloads[model.fileName] { self.start(model) }
+                }
                 return
             }
         }

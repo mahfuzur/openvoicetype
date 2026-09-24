@@ -128,14 +128,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         }.store(in: &subscriptions)
     }
 
-    /// After an install, an update or a move (e.g. from the DMG to Applications), the bundled servers compile their Metal
-    /// shaders on first launch (10–20 s; macOS caches the result per binary and location). Do it now, in the background,
-    /// instead of during the first dictation.
+    /// After an install or an update, the helpers compile their Metal shaders on first launch (10–20 s; macOS caches the
+    /// result per binary and location). Do it now, in the background, instead of during the first dictation.
     private func warmUpNewHelpers() {
-        let helper = Bundle.main.bundleURL.appendingPathComponent("Contents/Helpers/whisper-server")
-        guard let attributes = try? FileManager.default.attributesOfItem(atPath: helper.path),
+        guard let helper = BundledHelpers.directory?.appendingPathComponent("whisper-server"),
+              let attributes = try? FileManager.default.attributesOfItem(atPath: helper.path),
               let modified = attributes[.modificationDate] as? Date else { return }
-        let stamp = "\(Updater.currentVersion)-\(Int(modified.timeIntervalSince1970))-\(Bundle.main.bundlePath)"
+        let stamp = "\(Updater.currentVersion)-\(Int(modified.timeIntervalSince1970))-\(helper.path)"
         guard UserDefaults.standard.string(forKey: "warmedHelpers") != stamp else { return }
         UserDefaults.standard.set(stamp, forKey: "warmedHelpers")
         if ModelCatalog.whisperModel(named: settings.whisperModel)?.isInstalled == true {
@@ -147,6 +146,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     /// A download finished: load it once now, so the bundled build's first-launch shader compile doesn't slow
     /// down the first dictation.
     private func modelInstalled(_ model: ModelFile) {
+        // A new user who downloaded a different model than the selected one (from its own row) should get it.
+        if model.directory == ModelCatalog.whisperDirectory,
+           ModelCatalog.whisperModel(named: settings.whisperModel)?.isInstalled != true {
+            settings.whisperModel = model.fileName
+        }
         if model == ModelCatalog.s1Mini {
             refreshS1Status()
             if settings.usesS1 { updateS1Server() } else { dictation.warmUp("s1-server") }

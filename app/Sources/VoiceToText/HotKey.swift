@@ -34,15 +34,14 @@ final class HotKey {
             defaults.set(label, forKey: "hotKeyLabel")
         }
 
-        /// A combo from a key press in the hotkey recorder, or nil if it can't be a global hotkey
-        /// (a plain letter would stop you typing it; function keys are fine on their own).
+        /// A combo from a key press in the hotkey recorder, or nil if it can't be a global hotkey. It needs ⌃ or ⌥
+        /// (a plain letter would stop you typing it, and ⌘ shortcuts like ⌘V or ⌘Q belong to every app: a global ⌘V
+        /// would even catch the app's own paste). Function keys are fine on their own.
         init?(event: NSEvent) {
             let flags = event.modifierFlags.intersection([.command, .option, .control, .shift])
             let code = Int(event.keyCode)
             let isFunctionKey = Self.functionKeys[code] != nil
-            guard isFunctionKey || flags.contains(.command) || flags.contains(.option) || flags.contains(.control) else {
-                return nil
-            }
+            guard isFunctionKey || flags.contains(.option) || flags.contains(.control) else { return nil }
             var carbon = 0
             var symbols = ""
             if flags.contains(.control) { carbon |= controlKey; symbols += "⌃" }

@@ -1,6 +1,6 @@
 # Changelog
 
-## 0.1.0 (unreleased)
+## 0.1.0 (2026-09-24)
 
 First public version.
 
@@ -17,7 +17,10 @@ First public version.
 - Releases: `scripts/release.sh` and a GitHub Actions workflow build a signed DMG from a version tag; a daily update check
   shows "Update Available" in the menu.
 - Fixes: the recording length no longer needs `sox` (every dictation was skipped as too short without it), and a model
-  server restarts when the chosen model changes.
+  server restarts when the chosen model or its binary changes.
+- Release review fixes: the bundled helpers run from a copy in Application Support (in a downloaded DMG they were blocked
+  by Gatekeeper even after Open Anyway), resumed downloads work, the hotkey recorder can't get stuck, and Claude Code is
+  found in more install locations.
 
 - Menu-bar app with a global hotkey, Esc to cancel, and a floating overlay (live waveform, transcribing and polishing states).
 - On-device transcription with whisper.cpp (large-v3-turbo) and a style and vocabulary prompt.

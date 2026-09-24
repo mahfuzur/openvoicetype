@@ -6,11 +6,17 @@ import SwiftUI
 /// working dictation without Terminal. Every step shows a check once done, so running it again just confirms things.
 final class SetupWindowController: NSWindowController {
     init(actions: AppActions, lastResult: LastResult) {
-        let window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 620, height: 700),
-                              styleMask: [.titled, .closable], backing: .buffered, defer: false)
+        // As tall as the design wants, but never taller than the screen (a 13" laptop with larger text), and resizable.
+        let available = (NSScreen.main?.visibleFrame.height ?? 900) - 60
+        let window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 620, height: min(760, available)),
+                              styleMask: [.titled, .closable, .resizable], backing: .buffered, defer: false)
         super.init(window: window)
-        window.contentViewController = NSHostingController(rootView: SetupView(
+        let host = NSHostingController(rootView: SetupView(
             actions: actions, lastResult: lastResult, close: { [weak window] in window?.close() }))
+        host.sizingOptions = [] // the window's size, not the view's ideal size
+        window.contentViewController = host
+        window.setContentSize(NSSize(width: 620, height: min(760, available)))
+        window.contentMinSize = NSSize(width: 620, height: 420)
         window.title = "Set Up Voice to Text"
     }
 
@@ -59,7 +65,7 @@ struct SetupView: View {
                          detail: "The app is running from the disk image or Downloads. macOS only keeps its permissions "
                              + "once it's in Applications.") {
                         Button("Move and Reopen") {
-                            moveError = AppLocation.moveToApplications()
+                            AppLocation.moveToApplications { moveError = $0 }
                         }
                         if let moveError { Text(moveError).font(.caption).foregroundColor(.red) }
                     }
@@ -132,7 +138,7 @@ struct SetupView: View {
             }
             .padding(16)
         }
-        .frame(width: 620, height: 760)
+        .frame(minWidth: 620, maxWidth: .infinity, minHeight: 420, maxHeight: .infinity)
         .background(Color(nsColor: .windowBackgroundColor))
         .onReceive(poll) { _ in
             micStatus = AVCaptureDevice.authorizationStatus(for: .audio)
@@ -151,10 +157,12 @@ struct SetupView: View {
         micStatus == .authorized && selectedModelInstalled
     }
 
-    /// With no Claude yet, S1-mini cleans up so dictation works now; once Claude is ready it becomes the default again.
+    /// On a new Mac with no Claude yet, S1-mini cleans up so dictation works now; once Claude is ready it becomes the
+    /// default again. It never changes the choice of someone who finished setup before (running it again).
     private func chooseEngine() {
+        guard !settings.setupCompleted else { return }
         if claude.isReady {
-            if settings.cleanupEngine == "s1" && !settings.setupCompleted { settings.cleanupEngine = "claude" }
+            if settings.cleanupEngine == "s1" { settings.cleanupEngine = "claude" }
         } else if case .checking = claude.status {
             return
         } else if ModelCatalog.s1Mini.isInstalled {
@@ -192,8 +200,9 @@ enum AppLocation {
             && (path.contains("/AppTranslocation/") || path.hasPrefix("/Volumes/") || path.hasPrefix("\(home)/Downloads/"))
     }
 
-    /// Copies the app to /Applications and opens the copy; returns an error message if it couldn't.
-    static func moveToApplications() -> String? {
+    /// Copies the app to /Applications and opens the copy, then quits. If either step fails, it stays open and
+    /// calls `failed` (on main) with a message.
+    static func moveToApplications(failed: @escaping (String) -> Void) {
         let source = Bundle.main.bundleURL
         let destination = URL(fileURLWithPath: "/Applications").appendingPathComponent(source.lastPathComponent)
         do {
@@ -202,13 +211,19 @@ enum AppLocation {
             }
             try FileManager.default.copyItem(at: source, to: destination)
         } catch {
-            return "Couldn't copy it: \(error.localizedDescription). Drag it to Applications in Finder instead."
+            return failed("Couldn't copy it: \(error.localizedDescription). Drag it to Applications in Finder instead.")
         }
         let config = NSWorkspace.OpenConfiguration()
         config.createsNewApplicationInstance = true
-        NSWorkspace.shared.openApplication(at: destination, configuration: config) { _, _ in
-            DispatchQueue.main.async { NSApp.terminate(nil) }
+        NSWorkspace.shared.openApplication(at: destination, configuration: config) { app, error in
+            DispatchQueue.main.async {
+                if app != nil && error == nil {
+                    NSApp.terminate(nil)
+                } else {
+                    failed("Copied to Applications, but it didn't open (\(error?.localizedDescription ?? "unknown error")). "
+                        + "Quit this copy and open Voice to Text from Applications.")
+                }
+            }
         }
-        return nil
     }
 }
