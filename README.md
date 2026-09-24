@@ -63,6 +63,7 @@ On first launch, allow **Microphone** access, and turn on **Voice to Text** unde
 |---|---|
 | Start dictating | **⌃⌥Space** (you can change it in the menu under **Hotkey**) |
 | Stop and paste | **⌃⌥Space** again |
+| Hold to talk instead | Menu → **Hotkey ▸ Hold to Talk**: hold ⌃⌥Space while you speak, release to paste |
 | Cancel | **Esc** while recording |
 | Copy the last result again | Menu → **Copy Last** |
 
@@ -114,7 +115,7 @@ To use a hotkey without the app, bind `~/.local/bin/dictate` to a keyboard short
 
 ```
 hotkey ─► record (AVAudioEngine, 16 kHz WAV)
-       ─► transcribe on-device (whisper.cpp + a short style prompt and your vocabulary)
+       ─► transcribe on-device (whisper.cpp kept loaded in a local whisper-server + a style prompt and your vocabulary)
        ─► clean up (claude -p with prompts/system.md + a mode prompt; tools disabled, extended thinking off)
           or, offline, S1-mini through a local llama-server
        ─► post-process (dictionary replacements, output filter, paragraph and email fixes)
@@ -126,8 +127,11 @@ hotkey ─► record (AVAudioEngine, 16 kHz WAV)
 - **S1-mini** is a 0.6B model trained only to clean up transcripts. It takes a style setting per mode instead of a prompt,
   and it can't use your vocabulary (dictionary replacements still apply) or format code, so code mode keeps the raw text.
   It uses about 1 GB of memory while loaded: kept loaded when selected, and stopped 10 minutes after a fallback.
-- **Timing today:** about 2–3 s for Whisper, then 4–6 s for Claude or about 0.3 s for S1-mini, after you stop speaking.
-  Making this faster is the next milestone ([roadmap](docs/ROADMAP.md)).
+- **Speed:** with Claude, text is pasted about **3 s** after you stop speaking for a short dictation and 3.5–5.5 s for
+  15–20 s of speech; with S1-mini it's about **1.5 s** (M3 Pro; it was 6–9 s before). Two things make that possible: Whisper stays loaded in a
+  local `whisper-server` (about 1.9 GB of memory, loaded when you press the hotkey and unloaded after 10 idle minutes),
+  and the `claude` process is started when recording starts, so it's ready when the transcript is. Each Claude process
+  handles a single dictation, so nothing from an earlier dictation is carried over.
 
 ## Privacy
 

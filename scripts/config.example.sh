@@ -5,6 +5,11 @@
 # Whisper model (ggml format).
 # WHISPER_MODEL="$HOME/.local/share/whisper/ggml-large-v3-turbo.bin"
 
+# Keep Whisper loaded in a local whisper-server (faster; about 1.9 GB of memory while loaded)
+# WHISPER_SERVER="on"      # off = load the model with whisper-cli on every dictation
+# WHISPER_PORT=8179
+# WHISPER_IDLE_MINUTES=10  # unload after this long unused (it loads again in about 0.6 s)
+
 # Spoken language: en, bn, auto, ...
 # LANGUAGE="en"
 
@@ -18,6 +23,8 @@
 # REFINE_MIN_WORDS=4       # shorter utterances skip Claude
 
 # CLAUDE_THINKING_TOKENS=0 # extended thinking; 0 is much faster and the eval shows no quality loss
+# CLAUDE_PRESTART="on"     # start claude while you speak, so cleanup takes about 1 s instead of 4 s
+# CLAUDE_BIN="claude"      # path to the Claude Code CLI, if it isn't on PATH
 
 # Offline cleanup with S1-mini by Superwhisper (English only; installed by install.sh)
 # CLEANUP="claude"         # claude, or s1 to always clean up on this Mac
