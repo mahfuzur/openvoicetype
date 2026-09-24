@@ -46,7 +46,7 @@ post-processing, rich paste, and the eval harness (`evals/`). Eval: 30% → **10
 | M2.5 | Offline cleanup with S1-mini | 1–2 days | ✅ Done (2026-09-24) | Works with no internet; a fully on-device option |
 | M3 | Native pipeline and speed | 3–4 days | ✅ Done (2026-09-24): about 2× faster; ≤ 3 s for short dictations | Around 2–3 s total, needed before a public release |
 | M4 | Settings window, first-run setup and DMG | 7–9 days | ✅ Released as v0.1.0 (2026-09-24); a test on a second Mac is still to do ([plan](plans/M4-app-and-install.md)) | Anyone can install it from a DMG with no Homebrew or Terminal, and set it up in a real window |
-| M5 | Open-source release | 2–3 days | Partly done (license, CI, docs) | Name, terms check, demo, the first tagged DMG |
+| M5 | Open-source release | 2–3 days | ◐ In progress: rename to **OpenVoiceType**, terms check, demo GIF, community files ([plan](plans/M5-open-source-release.md)) | Name, terms check, demo, the first tagged DMG |
 | M6 | More providers | 3–4 days | Not started | Turns it into a platform: pick Codex, Gemini, Ollama or an API as well as Claude and S1-mini |
 
 M3 matters most for adoption: people don't keep using a slow dictation tool.
@@ -251,6 +251,9 @@ The original idea for the settings window (the plan has the final list):
 Installed CLIs are detected automatically by resolving the user's login-shell `PATH` (`zsh -lc 'command -v claude'`).
 
 ## M5: Open-source release
+
+> **Detailed plan and task tracking:** [plans/M5-open-source-release.md](plans/M5-open-source-release.md).
+> Decided on 2026-09-24: the new name is **OpenVoiceType**; Claude's terms are disclosed in `docs/TERMS.md` and the wording is softer.
 
 - **Name and IDs:** choose a unique name ("Voice to Text" is too generic to find) and check GitHub, the App Store and trademarks.
   Use the bundle ID `io.github.<user>.<name>`, and remove personal paths, e-mail addresses and the Superwhisper model path.
