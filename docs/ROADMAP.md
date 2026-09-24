@@ -39,19 +39,20 @@ post-processing, rich paste, and the eval harness (`evals/`). Eval: 30% → **10
 
 ## Roadmap
 
-| # | Milestone | Effort | Why |
-|---|---|---|---|
-| M1 | Floating overlay with animations | 1–2 days | You can see when it's listening and working |
-| M2 | Formatting quality | 2 days | Lists, paragraphs, spoken commands, app-aware style |
-| M3 | Native pipeline and speed | 3–4 days | Around 2–3 s total, needed before a public release |
-| M4 | Settings window and providers | 4–5 days | Turns it into a platform: pick Claude, Codex, Gemini, Ollama or an API |
-| M5 | Open-source release | 2–3 days | Name, license, CI, signing, docs |
+| # | Milestone | Effort | Status | Why |
+|---|---|---|---|---|
+| M1 | Floating overlay with animations | 1–2 days | ✅ Done (2026-09-23) | You can see when it's listening and working |
+| M2 | Formatting quality | 2 days | ✅ Done (2026-09-23) | Lists, paragraphs, spoken commands, app-aware style |
+| M2.5 | Offline cleanup with S1-mini | 1–2 days | Next | Works with no internet; a fully on-device option |
+| M3 | Native pipeline and speed | 3–4 days | Not started | Around 2–3 s total, needed before a public release |
+| M4 | Settings window and providers | 4–5 days | Not started | Turns it into a platform: pick Claude, Codex, Gemini, Ollama or an API |
+| M5 | Open-source release | 2–3 days | Partly done (license, CI, docs) | Name, license, CI, signing, docs |
 
-M1 and M2 are what you're missing today. M3 matters most for adoption: people don't keep using a slow dictation tool.
+M3 matters most for adoption: people don't keep using a slow dictation tool.
 
 ---
 
-## M1: Floating overlay (recording and processing indicator)
+## M1: Floating overlay (recording and processing indicator) ✅ Done
 
 A small pill-shaped overlay at the bottom-centre of the screen, like Wispr Flow's, shown above every app and never taking focus.
 
@@ -76,7 +77,7 @@ Technical:
 
 **Done when:** a glance at the screen always tells you whether it's listening, working, or finished.
 
-## M2: Formatting quality
+## M2: Formatting quality ✅ Done
 
 > **Detailed plan and task tracking:** [plans/M2-formatting-quality.md](plans/M2-formatting-quality.md)
 
@@ -123,6 +124,60 @@ compare Haiku with Sonnet, and catch regressions. The first cases come from the 
 
 **Done when:** the grocery-list, long-feedback and "Claude" cases all pass the eval.
 
+## M2.5: Offline cleanup with S1-mini
+
+[S1-mini](https://huggingface.co/superwhisper/s1-mini-GGUF) by Superwhisper is a 0.6B model trained only to clean up ASR
+transcripts: fillers, self-corrections, punctuation, numbers, dates and emails. It's English only, `s1-mini-q4_k_m.gguf` is 484 MB,
+and the license is Apache 2.0 plus a naming clause (credit it as "S1-mini by Superwhisper" and ship its LICENSE and NOTICE).
+Whisper is already local, so with S1-mini the whole pipeline runs on the Mac.
+
+**Behaviour:**
+
+| Cleanup setting | What happens |
+|---|---|
+| Claude (default) | Claude cleans up. If the Mac is offline, or Claude fails (not logged in, rate limit, error, empty output, timeout), S1-mini cleans up instead. If S1-mini also fails, the raw Whisper text is pasted. |
+| S1-mini | Always S1-mini, fully offline. Raw text if it fails. |
+| Off / raw mode | No cleanup, as today. |
+
+**Runtime:** llama.cpp from Homebrew (`brew install llama.cpp`), the runtime the S1-mini authors document. Ollama was
+considered: same speed (it's built on llama.cpp), but S1-mini isn't in its library, it needs a custom Modelfile to get the
+prompt format right, and every user would have to install a separate app.
+
+- `llama-server -m <model> --jinja --chat-template-kwargs '{"enable_thinking":false}' --temp 0` on `127.0.0.1`.
+  Requests go to its OpenAI-style `/v1/chat/completions` endpoint with `curl`.
+- **Memory (about 0.5 GB):** kept loaded only while S1-mini is the selected cleanup. For a fallback it's started on demand
+  (about 1–2 s extra that time) and stopped after a few idle minutes.
+- The model path comes from config (`S1_MODEL`, default `~/.local/share/s1-mini/s1-mini-q4_k_m.gguf`). `install.sh`
+  installs llama.cpp and downloads the model.
+
+**Prompt:** S1-mini doesn't follow instructions. It takes its own fixed system prompt, then a control line and the transcript:
+`[Styling: casual|semi-casual|semi-formal|formal] [Structure: prose|lists] [Context: general|email]`. Mode mapping, to be tuned
+with the eval:
+
+| Mode | Control line |
+|---|---|
+| default | semi-formal, lists, general (it only makes a list for 3+ items) |
+| chat | semi-casual, prose, general |
+| email | semi-formal, prose, email |
+| notes | semi-formal, lists, general |
+| code | Skip S1-mini: raw text + `post_process` (S1-mini has no code style) |
+
+It takes no vocabulary, so names rely on the Whisper `--prompt` and the dictionary replacements in `post_process`, which still
+runs on S1-mini output.
+
+**Offline check:** the app watches the network with `NWPathMonitor` and passes `VTT_OFFLINE=on`, so it goes straight to S1-mini
+instead of waiting for Claude to time out. From the CLI, `dictate.sh` falls back when Claude fails.
+
+**Work:**
+- [ ] `dictate.sh`: `refine_s1()`, llama-server start/health check, the fallback chain, and logging (`refine=s1` / `refine=s1-fallback`)
+- [ ] `config.example.sh` and `install.sh`: `S1_MODEL`, `brew install llama.cpp`, model download
+- [ ] App: a Cleanup menu (Claude Haiku / Claude Sonnet / S1-mini offline / Off), `NWPathMonitor`, keep llama-server running while S1-mini is selected
+- [ ] Overlay: show "Polishing offline…" when S1-mini is used
+- [ ] `evals/run.py --refiner s1`: record a baseline score and latency next to Haiku
+- [ ] README: offline mode, privacy note, "S1-mini by Superwhisper" credit; CLAUDE.md pipeline notes
+
+**Done when:** with Wi-Fi off, a dictation is cleaned up by S1-mini and pasted, and the self-test passes with S1-mini selected.
+
 ## M3: Native pipeline and speed
 
 Target: **≤ 3 s** from stopping to pasted text, for 15 s of speech.
@@ -157,6 +212,7 @@ A SwiftUI settings window with these tabs:
 | Provider | How it's called | Auth | Notes |
 |---|---|---|---|
 | Claude Code CLI | `claude -p` | The user's Claude subscription | Current implementation |
+| S1-mini | Local `llama-server` | None | M2.5; the offline fallback |
 | OpenAI Codex CLI | `codex exec` | The user's ChatGPT subscription | Flags need checking |
 | Gemini CLI | `gemini -p` | Google account | Flags need checking |
 | Ollama / LM Studio | Local HTTP | None | Fully offline; fast with small models |
@@ -208,7 +264,9 @@ These are the two features, from comparing with Wispr Flow and Typeless, that ar
 1. ~~Overlay style~~: a bottom-centre pill (done in M1).
 2. ~~Name and license~~: **Voice to Text**, **MIT**, bundle ID `io.github.mahfuzur.voicetotext`.
 3. **Apple Developer account** ($99 a year) for signed and notarized releases: still open. Until then, releases are built from source.
+4. ~~Offline cleanup~~: **S1-mini** through llama.cpp. Claude stays the default; S1-mini is the automatic fallback and a selectable option (2026-09-24).
 
 ## Next step
 
-M3: speed (whisper-server with the model kept loaded, a persistent Claude session), aiming for ≤ 3 s end to end.
+M2.5: S1-mini offline cleanup. Then M3: speed (whisper-server with the model kept loaded, a persistent Claude session),
+aiming for ≤ 3 s end to end.
