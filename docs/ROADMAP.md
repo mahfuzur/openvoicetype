@@ -43,7 +43,7 @@ post-processing, rich paste, and the eval harness (`evals/`). Eval: 30% → **10
 |---|---|---|---|---|
 | M1 | Floating overlay with animations | 1–2 days | ✅ Done (2026-09-23) | You can see when it's listening and working |
 | M2 | Formatting quality | 2 days | ✅ Done (2026-09-23) | Lists, paragraphs, spoken commands, app-aware style |
-| M2.5 | Offline cleanup with S1-mini | 1–2 days | Next | Works with no internet; a fully on-device option |
+| M2.5 | Offline cleanup with S1-mini | 1–2 days | Built (2026-09-24), needs a Wi-Fi-off test | Works with no internet; a fully on-device option |
 | M3 | Native pipeline and speed | 3–4 days | Not started | Around 2–3 s total, needed before a public release |
 | M4 | Settings window and providers | 4–5 days | Not started | Turns it into a platform: pick Claude, Codex, Gemini, Ollama or an API |
 | M5 | Open-source release | 2–3 days | Partly done (license, CI, docs) | Name, license, CI, signing, docs |
@@ -145,7 +145,7 @@ prompt format right, and every user would have to install a separate app.
 
 - `llama-server -m <model> --jinja --chat-template-kwargs '{"enable_thinking":false}' --temp 0` on `127.0.0.1`.
   Requests go to its OpenAI-style `/v1/chat/completions` endpoint with `curl`.
-- **Memory (about 0.5 GB):** kept loaded only while S1-mini is the selected cleanup. For a fallback it's started on demand
+- **Memory (about 1 GB measured: the 484 MB model plus a 4K context):** kept loaded only while S1-mini is the selected cleanup. For a fallback it's started on demand
   (about 1–2 s extra that time) and stopped after a few idle minutes.
 - The model path comes from config (`S1_MODEL`, default `~/.local/share/s1-mini/s1-mini-q4_k_m.gguf`). `install.sh`
   installs llama.cpp and downloads the model.
@@ -157,7 +157,7 @@ with the eval:
 | Mode | Control line |
 |---|---|
 | default | semi-formal, lists, general (it only makes a list for 3+ items) |
-| chat | semi-casual, prose, general |
+| chat | semi-formal, prose, general (semi-casual lower-cased sentence starts) |
 | email | semi-formal, prose, email |
 | notes | semi-formal, lists, general |
 | code | Skip S1-mini: raw text + `post_process` (S1-mini has no code style) |
@@ -165,16 +165,23 @@ with the eval:
 It takes no vocabulary, so names rely on the Whisper `--prompt` and the dictionary replacements in `post_process`, which still
 runs on S1-mini output.
 
-**Offline check:** the app watches the network with `NWPathMonitor` and passes `VTT_OFFLINE=on`, so it goes straight to S1-mini
-instead of waiting for Claude to time out. From the CLI, `dictate.sh` falls back when Claude fails.
+**Offline check:** `dictate.sh` skips Claude when the Mac has no default route (`route -n get default`, instant), so the app and
+the CLI both go straight to S1-mini instead of waiting for Claude to time out. `VTT_OFFLINE=on` forces it for testing.
+A network without internet access still waits for Claude's timeout, then falls back.
 
 **Work:**
-- [ ] `dictate.sh`: `refine_s1()`, llama-server start/health check, the fallback chain, and logging (`refine=s1` / `refine=s1-fallback`)
-- [ ] `config.example.sh` and `install.sh`: `S1_MODEL`, `brew install llama.cpp`, model download
-- [ ] App: a Cleanup menu (Claude Haiku / Claude Sonnet / S1-mini offline / Off), `NWPathMonitor`, keep llama-server running while S1-mini is selected
-- [ ] Overlay: show "Polishing offline…" when S1-mini is used
-- [ ] `evals/run.py --refiner s1`: record a baseline score and latency next to Haiku
-- [ ] README: offline mode, privacy note, "S1-mini by Superwhisper" credit; CLAUDE.md pipeline notes
+- [x] `dictate.sh`: `refine_s1()`, `s1-server` commands with an idle watchdog, the fallback chain, and logging (`refine=s1` / `refine=s1-fallback`)
+- [x] `config.example.sh` and `install.sh`: `CLEANUP`, `S1_*` settings, `brew install llama.cpp`, model download
+- [x] App: Cleanup Model menu (Claude Haiku / Claude Sonnet / S1-mini offline, plus the fallback toggle), llama-server kept loaded while S1-mini is selected, "Pasted · cleaned offline"
+- [x] Overlay: "Polishing offline" when S1-mini is selected
+- [x] `evals/run.py --cleanup s1`: baseline recorded (below)
+- [x] README: offline mode, privacy note, "S1-mini by Superwhisper" credit; CLAUDE.md pipeline notes
+- [ ] Real test: Wi-Fi off, dictate in the app
+
+**Eval baseline (2026-09-24):** S1-mini **10/20** (median 1.1 s per case in the parallel eval, about 0.1–0.3 s per call when warm)
+vs Haiku **20/20** (3.8 s). Two failures are code-mode cases S1-mini skips by design. The rest: no vocabulary ("Cloud Code"),
+no context-based fixes of Whisper mishearings ("witness day"), spoken email digits, and one heavy self-correction where it
+dropped items. Good enough as a fallback; Claude stays the default for quality.
 
 **Done when:** with Wi-Fi off, a dictation is cleaned up by S1-mini and pasted, and the self-test passes with S1-mini selected.
 

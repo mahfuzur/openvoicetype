@@ -19,6 +19,14 @@
 
 # CLAUDE_THINKING_TOKENS=0 # extended thinking; 0 is much faster and the eval shows no quality loss
 
+# Offline cleanup with S1-mini by Superwhisper (English only; installed by install.sh)
+# CLEANUP="claude"         # claude, or s1 to always clean up on this Mac
+# S1_FALLBACK="on"         # use S1-mini when Claude is unavailable (offline, not logged in, error, timeout)
+# S1_MODEL="$HOME/.local/share/s1-mini/s1-mini-q4_k_m.gguf"
+# S1_PORT=8178             # local llama-server port
+# S1_TIMEOUT=10            # seconds before falling back to the raw text
+# S1_IDLE_MINUTES=10       # a server started for a fallback stops after this long unused
+
 # Writing style: default | chat | email | code | notes | raw (the app picks it from the focused app)
 # MODE="default"
 

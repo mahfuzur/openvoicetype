@@ -6,7 +6,9 @@ which tests the cleanup layer on its own. With --e2e: synthesizes the case's `sa
 then runs `dictate.sh transcribe` + `refine`, which tests Whisper, cleanup and post-processing together.
 
 Usage:
-  evals/run.py [--model haiku|sonnet] [--case ID ...] [--e2e] [--runs N] [--jobs N] [--show]
+  evals/run.py [--model haiku|sonnet] [--cleanup claude|s1] [--case ID ...] [--e2e] [--runs N] [--jobs N] [--show]
+
+--cleanup s1 evaluates S1-mini (offline, through llama-server) instead of Claude.
 """
 import argparse
 import concurrent.futures as futures
@@ -38,12 +40,15 @@ def run_script(args, text=None, env=None, timeout=90):
     return result.returncode, result.stdout.strip()
 
 
-def case_env(case, model, log_file):
+def case_env(case, args, log_file):
     env = dict(os.environ)
     env.update({
         "VTT_QUIET": "on",
         "VTT_REFINE": "on",
-        "VTT_CLAUDE_MODEL": model,
+        "VTT_CLEANUP": args.cleanup,
+        # Measure the selected engine alone: a Claude failure must not be hidden by the S1-mini fallback.
+        "VTT_S1_FALLBACK": "off",
+        "VTT_CLAUDE_MODEL": args.model,
         "VTT_MODE": case.get("mode", "default"),
         "VTT_APP": case.get("app", ""),
         "VTT_VOCAB": ", ".join(case.get("vocabulary", [])),
@@ -101,7 +106,7 @@ def check(output, checks):
 
 
 def run_case(case, args, log_file):
-    env = case_env(case, args.model, log_file)
+    env = case_env(case, args, log_file)
     started = time.time()
     raw = case["input"]
     if args.e2e:
@@ -121,7 +126,8 @@ def run_case(case, args, log_file):
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
-    parser.add_argument("--model", default="haiku")
+    parser.add_argument("--model", default="haiku", help="Claude model (with --cleanup claude)")
+    parser.add_argument("--cleanup", default="claude", choices=["claude", "s1"])
     parser.add_argument("--case", action="append", help="run only these case ids")
     parser.add_argument("--e2e", action="store_true", help="synthesize speech and run Whisper too")
     parser.add_argument("--runs", type=int, default=1, help="repeat each case (flakiness check)")
@@ -133,10 +139,13 @@ def main():
     if args.case:
         cases = [c for c in cases if c["id"] in args.case]
     jobs = args.jobs or (2 if args.e2e else 4)
+    engine = args.model if args.cleanup == "claude" else "s1"
+    if args.cleanup == "s1" and run_script(["s1-server", "start"])[0] != 0:
+        sys.exit("S1-mini is not installed or did not start (run scripts/install.sh)")
 
     RESULTS.mkdir(parents=True, exist_ok=True)
     stamp = datetime.now().strftime("%Y%m%d-%H%M%S")
-    label = f"{stamp}-{args.model}{'-e2e' if args.e2e else ''}"
+    label = f"{stamp}-{engine}{'-e2e' if args.e2e else ''}"
     log_file = RESULTS / f"{label}.log"
 
     work = [case for case in cases for _ in range(args.runs)]
@@ -159,10 +168,10 @@ def main():
     seconds = [r["seconds"] for r in results]
     median = statistics.median(seconds) if seconds else 0
     print(f"\n{passed}/{len(results)} passed ({100 * passed / max(len(results), 1):.0f}%)  "
-          f"model={args.model}  median={median:.1f}s{'  e2e' if args.e2e else ''}")
+          f"engine={engine}  median={median:.1f}s{'  e2e' if args.e2e else ''}")
 
     report = RESULTS / f"{label}.json"
-    report.write_text(json.dumps({"model": args.model, "e2e": args.e2e, "passed": passed,
+    report.write_text(json.dumps({"model": engine, "e2e": args.e2e, "passed": passed,
                                   "total": len(results), "median_seconds": median,
                                   "results": results}, indent=2))
     print(f"report: {report.relative_to(ROOT)}")

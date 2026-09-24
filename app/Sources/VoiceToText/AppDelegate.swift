@@ -36,6 +36,18 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         get { defaults.string(forKey: "claudeModel") ?? "haiku" }
         set { defaults.set(newValue, forKey: "claudeModel"); dictation.claudeModel = newValue }
     }
+    /// "claude" (default) or "s1" (S1-mini, fully offline).
+    private var cleanupEngine: String {
+        get { defaults.string(forKey: "cleanupEngine") ?? "claude" }
+        set { defaults.set(newValue, forKey: "cleanupEngine"); dictation.cleanupEngine = newValue }
+    }
+    private var s1Fallback: Bool {
+        get { defaults.object(forKey: "s1Fallback") as? Bool ?? true }
+        set { defaults.set(newValue, forKey: "s1Fallback"); dictation.s1Fallback = newValue }
+    }
+    /// From `dictate.sh s1-server status`; nil until the first check finishes.
+    private var s1Installed: Bool?
+    private var usesS1: Bool { refine && cleanupEngine == "s1" }
     private var showOverlay: Bool {
         get { defaults.object(forKey: "showOverlay") as? Bool ?? true }
         set { defaults.set(newValue, forKey: "showOverlay"); overlay.isEnabled = newValue }
@@ -72,6 +84,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         dictation = Dictation(scriptURL: script)
         dictation.refine = refine
         dictation.claudeModel = claudeModel
+        dictation.cleanupEngine = cleanupEngine
+        dictation.s1Fallback = s1Fallback
         dictation.inputDeviceUID = inputDeviceUID
         dictation.onStateChange = { [weak self] state in self?.stateChanged(state) }
         dictation.onLevel = { [weak self] level in self?.overlay.push(level: level) }
@@ -109,6 +123,26 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         registerHotKey()
         requestMicrophoneIfNeeded()
         if !AXIsProcessTrusted() { promptAccessibility() }
+        refreshS1Status()
+        updateS1Server()
+    }
+
+    func applicationWillTerminate(_ notification: Notification) {
+        dictation?.stopS1Server()
+    }
+
+    // MARK: - S1-mini server
+
+    private func refreshS1Status() {
+        dictation.s1Server(["status"]) { [weak self] _, output in
+            self?.s1Installed = output.trimmingCharacters(in: .whitespacesAndNewlines) != "missing"
+        }
+    }
+
+    /// Keeps S1-mini loaded while it's the selected cleanup; otherwise lets it stop after idling
+    /// (a Claude fallback starts it on demand).
+    private func updateS1Server() {
+        dictation.s1Server(usesS1 ? ["start", "--keep"] : ["release"])
     }
 
     /// Records 2 s from the selected mic and writes a one-line report (for development: checks that
@@ -157,7 +191,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         }
         let steps: [(TimeInterval, () -> Void)] = [
             (4.0, { levels.invalidate(); self.overlay.show(.transcribing) }),
-            (6.0, { self.overlay.show(.polishing) }),
+            (6.0, { self.overlay.show(.polishing(offline: false)) }),
             (8.5, { self.overlay.finish(.success("Pasted"), after: 1.5) }),
             (10.5, { self.overlay.finish(.message("No speech detected", isError: false), after: 1.5) }),
             (12.5, { self.overlay.finish(.message("Transcription failed", isError: true), after: 1.5) }),
@@ -195,7 +229,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
             play("Pop")
             overlay.show(.transcribing)
         case .polishing:
-            overlay.show(.polishing)
+            overlay.show(.polishing(offline: usesS1))
         case .idle, .testingMic:
             break
         }
@@ -203,7 +237,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
 
     private func finished(_ outcome: Dictation.Outcome) {
         switch outcome {
-        case .text(let text, let cleanupFailed, let context):
+        case .text(let text, let cleanupFailed, let offlineFallback, let context):
             lastResult = text
             // Rich text only helps where lists render; terminals and editors get plain text.
             let html = richPaste && context.mode != .code && RichText.containsList(text)
@@ -216,10 +250,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
             } else if !pasted {
                 label = "Copied. Press ⌘V (allow Accessibility to auto-paste)"
             } else {
-                label = (cleanupFailed ? "Pasted without cleanup" : "Pasted") + modeSuffix
+                label = (cleanupFailed ? "Pasted without cleanup" : offlineFallback ? "Pasted · cleaned offline" : "Pasted")
+                    + modeSuffix
             }
             AppLog.write("RESULT \(pasted ? "pasted" : "copied") mode=\(context.mode.rawValue) app=\"\(context.appName)\" "
-                + "chars=\(text.count) rich=\(html != nil) cleanupFailed=\(cleanupFailed)")
+                + "chars=\(text.count) rich=\(html != nil) cleanupFailed=\(cleanupFailed) offlineFallback=\(offlineFallback)")
             overlay.finish(.success(label), after: pasted ? 0.9 : 2.5)
         case .noSpeech:
             AppLog.write("RESULT no-speech")
@@ -276,7 +311,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         case .recording: "Recording… \(hotKeyLabel) to finish, Esc to cancel"
         case .testingMic: "Testing \(dictation.deviceName)…"
         case .transcribing: "Transcribing…"
-        case .polishing: "Polishing with Claude…"
+        case .polishing: usesS1 ? "Polishing with S1-mini…" : "Polishing with Claude…"
         }
         menu.addItem(disabled(status))
         menu.addItem(.separator())
@@ -297,14 +332,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         }
 
         menu.addItem(.separator())
-        menu.addItem(item("Clean Up with Claude", #selector(toggleRefine), checked: refine))
-        let modelMenu = NSMenu()
-        for (title, model) in [("Haiku (fastest)", "haiku"), ("Sonnet (smarter)", "sonnet")] {
-            let entry = item(title, #selector(selectModel(_:)), checked: claudeModel == model)
-            entry.representedObject = model
-            modelMenu.addItem(entry)
-        }
-        menu.addItem(submenu("Claude Model", modelMenu))
+        menu.addItem(item("Clean Up Text", #selector(toggleRefine), checked: refine))
+        menu.addItem(cleanupModelMenuItem())
         menu.addItem(item("Paste Automatically", #selector(toggleAutoPaste), checked: autoPaste))
         menu.addItem(item("Paste Lists as Rich Text", #selector(toggleRichPaste), checked: richPaste))
         menu.addItem(modeMenuItem())
@@ -346,6 +375,40 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         menu.addItem(item("Open Log", #selector(openLog)))
         menu.addItem(.separator())
         menu.addItem(item("Quit Voice to Text", #selector(quit), key: "q"))
+    }
+
+    private func cleanupModelMenuItem() -> NSMenuItem {
+        refreshS1Status() // for the next time the menu opens
+        let installed = s1Installed ?? true
+        let menu = NSMenu()
+        let claudeModels = [("Claude Haiku (fastest)", "haiku"), ("Claude Sonnet (smarter)", "sonnet")]
+        for (title, model) in claudeModels {
+            let entry = item(title, #selector(selectModel(_:)), checked: cleanupEngine == "claude" && claudeModel == model)
+            entry.representedObject = model
+            menu.addItem(entry)
+        }
+        menu.addItem(.separator())
+        let s1Item = item(installed ? "S1-mini (offline)" : "S1-mini (not installed)", #selector(selectS1),
+                          checked: cleanupEngine == "s1")
+        s1Item.isEnabled = installed
+        menu.addItem(s1Item)
+        let fallbackItem = item("Use S1-mini When Claude Is Unavailable", #selector(toggleS1Fallback),
+                                checked: s1Fallback && installed)
+        fallbackItem.isEnabled = installed && cleanupEngine == "claude"
+        menu.addItem(fallbackItem)
+        menu.addItem(.separator())
+        if installed {
+            menu.addItem(disabled("S1-mini by Superwhisper runs on this Mac:"))
+            menu.addItem(disabled("no internet needed, English only."))
+        } else {
+            menu.addItem(disabled("Run scripts/install.sh to install S1-mini"))
+            menu.addItem(disabled("(offline cleanup, about 500 MB)."))
+        }
+        menu.autoenablesItems = false
+
+        let current = cleanupEngine == "s1" ? "S1-mini"
+            : claudeModels.first { $0.1 == claudeModel }.map { $0.0.components(separatedBy: " (")[0] } ?? "Claude"
+        return submenu("Cleanup Model: \(current)", menu)
     }
 
     private func modeMenuItem() -> NSMenuItem {
@@ -426,7 +489,17 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
 
     @objc private func toggleDictation() { dictation.toggle() }
     @objc private func cancelDictation() { dictation.cancel() }
-    @objc private func toggleRefine() { refine.toggle() }
+    @objc private func toggleRefine() {
+        refine.toggle()
+        updateS1Server()
+    }
+
+    @objc private func selectS1() {
+        cleanupEngine = "s1"
+        updateS1Server()
+    }
+
+    @objc private func toggleS1Fallback() { s1Fallback.toggle() }
     @objc private func toggleAutoPaste() { autoPaste.toggle() }
     @objc private func toggleOverlay() { showOverlay.toggle() }
     @objc private func toggleRichPaste() { richPaste.toggle() }
@@ -507,7 +580,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     }
 
     @objc private func selectModel(_ sender: NSMenuItem) {
-        if let model = sender.representedObject as? String { claudeModel = model }
+        guard let model = sender.representedObject as? String else { return }
+        claudeModel = model
+        cleanupEngine = "claude"
+        updateS1Server()
     }
 
     @objc private func selectHotKey(_ sender: NSMenuItem) {
