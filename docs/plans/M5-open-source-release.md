@@ -115,7 +115,7 @@ confirmation (§7).
 |---|---|---|
 | R1 | Rename: `Info.plist`, `build-app.sh`, `release.sh`, `dmg-settings.py`, `release.yml`, `ci.yml` paths; UI strings; `Updater.repository`; `BundledHelpers` folder | ☑ The local v0.2.0 DMG holds `OpenVoiceType.app` with the new ID, and its signature verifies |
 | R2 | `Migration.swift`: copy settings, offer to move the old app to the Trash (quit it, clean its Accessibility entry), open-at-login note | ☑ The settings copy was tested on throwaway preference domains (6 checks). Old-app detection was run read-only on this Mac: it finds only `/Applications/Voice to Text.app`, not the build folder or mounted DMGs. **The Trash flow wasn't run**: the only old app here is the maintainer's real one. Developer modes (`--settings-snapshots` …) skip the migration |
-| R3 | Artwork: the DMG caption, regenerated background; README screenshots that show the name | ◐ The background is regenerated. `docs/images/dmg-window.png` still shows the old name: retaking it needs Screen Recording, so it's §7 step 4. The other screenshots don't show the name |
+| R3 | Artwork: the DMG caption, regenerated background; README screenshots that show the name | ☑ The background is regenerated, and the maintainer retook `docs/images/dmg-window.png` from the local v0.2.0 DMG. The other screenshots don't show the name |
 | R4 | `docs/TERMS.md`; README tagline, intro, Privacy and License wording; About and Cleanup links | ☑ The app's "your subscription" labels are softened too (the Cleanup picker, setup, the Claude status line) |
 | R5 | `scripts/make-demo-gif.sh`; README slot; ARTWORK.md recording notes | ☑ `--from` conversion tested (10 s → 2.2 MB); recording itself needs Screen Recording, so not run here |
 | R6 | Community files: feature request, `config.yml`, PR template, `SECURITY.md` | ☑ Also a version line in the bug template. Private vulnerability reporting must be switched on (§7 step 3) |
@@ -137,7 +137,7 @@ confirmation (§7).
 
 ## 7. Publishing steps (for the maintainer, after review)
 
-1. **Try the migration yourself** on this Mac: `./scripts/build-app.sh --install` installs `/Applications/OpenVoiceType.app`
+1. ☑ (2026-09-24) **Try the migration yourself** on this Mac: `./scripts/build-app.sh --install` installs `/Applications/OpenVoiceType.app`
    next to the old app. On its first launch it should keep your settings, offer to trash Voice to Text, then ask for
    Microphone and Accessibility.
 2. Merge the PR, then rename the repo (GitHub keeps redirecting the old URL, so v0.1.x update checks still work):
@@ -145,7 +145,7 @@ confirmation (§7).
 3. Description, topics and private security reports:
    `gh repo edit --description "Free, open-source macOS dictation: on-device Whisper, polished by your own Claude Code CLI. No API keys." --add-topic macos --add-topic menu-bar-app --add-topic claude-code --add-topic whisper-cpp`
    and `gh api -X PUT repos/mahfuzur/openvoicetype/private-vulnerability-reporting` (the SECURITY.md link needs it).
-4. Screenshots: open `dist/OpenVoiceType-0.2.0.dmg` (`./scripts/release.sh v0.2.0`), press ⌘⇧4, then Space, and click the
+4. ☑ (2026-09-24) Screenshots: open `dist/OpenVoiceType-0.2.0.dmg` (`./scripts/release.sh v0.2.0`), press ⌘⇧4, then Space, and click the
    window. Save it as `docs/images/dmg-window.png`.
 5. Record the GIF (`scripts/make-demo-gif.sh`, see docs/ARTWORK.md), uncomment its line in the README, and commit.
 6. Change the CHANGELOG heading to the release date, then tag and publish: `git tag v0.2.0 && git push origin v0.2.0`
