@@ -1,10 +1,11 @@
 import AppKit
 import AVFoundation
+import Combine
 import ObjCSupport
-import ServiceManagement
 
 final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     private var statusItem: NSStatusItem!
+    private var menuBarIcon: MenuBarIcon!
     private var dictation: Dictation!
     private var hotKey: HotKey?
     private var escapeKey: HotKey?
@@ -12,78 +13,31 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     private let overlay = OverlayController()
     private var connectingWork: DispatchWorkItem?
 
-    private let defaults = UserDefaults.standard
-    private let configURL = FileManager.default.homeDirectoryForCurrentUser
-        .appendingPathComponent(".config/voice-to-text/config.sh")
-    private let logURL = FileManager.default.homeDirectoryForCurrentUser
-        .appendingPathComponent("Library/Logs/voice-to-text/dictate.log")
-    private let dictionaryURL = FileManager.default.homeDirectoryForCurrentUser
-        .appendingPathComponent(".config/voice-to-text/dictionary.txt")
+    private let settings = AppSettings.shared
+    private let claude = ClaudeCLI.shared
+    private let models = ModelManager.shared
+    private let updater = Updater.shared
+    private var subscriptions: Set<AnyCancellable> = []
+    private lazy var settingsWindow = SettingsWindowController(actions: actions)
+    private lazy var setupWindow = SetupWindowController(actions: actions, lastResult: lastResultModel)
+    private let lastResultModel = LastResult()
+    private var updateTimer: Timer?
 
-    private var hotKeyIndex: Int {
-        get { min(defaults.integer(forKey: "hotKeyIndex"), HotKey.presets.count - 1) }
-        set { defaults.set(newValue, forKey: "hotKeyIndex") }
-    }
-    private var refine: Bool {
-        get { defaults.object(forKey: "refine") as? Bool ?? true }
-        set { defaults.set(newValue, forKey: "refine"); dictation.refine = newValue }
-    }
-    private var autoPaste: Bool {
-        get { defaults.object(forKey: "autoPaste") as? Bool ?? true }
-        set { defaults.set(newValue, forKey: "autoPaste") }
-    }
-    private var claudeModel: String {
-        get { defaults.string(forKey: "claudeModel") ?? "haiku" }
-        set { defaults.set(newValue, forKey: "claudeModel"); dictation.claudeModel = newValue }
-    }
-    /// "claude" (default) or "s1" (S1-mini, fully offline).
-    private var cleanupEngine: String {
-        get { defaults.string(forKey: "cleanupEngine") ?? "claude" }
-        set { defaults.set(newValue, forKey: "cleanupEngine"); dictation.cleanupEngine = newValue }
-    }
-    private var s1Fallback: Bool {
-        get { defaults.object(forKey: "s1Fallback") as? Bool ?? true }
-        set { defaults.set(newValue, forKey: "s1Fallback"); dictation.s1Fallback = newValue }
-    }
     /// From `dictate.sh s1-server status`; nil until the first check finishes.
     private var s1Installed: Bool?
-    private var usesS1: Bool { refine && cleanupEngine == "s1" }
-    private var showOverlay: Bool {
-        get { defaults.object(forKey: "showOverlay") as? Bool ?? true }
-        set { defaults.set(newValue, forKey: "showOverlay"); overlay.isEnabled = newValue }
-    }
-    private var overlayPosition: OverlayController.Position {
-        get { OverlayController.Position(rawValue: defaults.string(forKey: "overlayPosition") ?? "") ?? .bottom }
-        set { defaults.set(newValue.rawValue, forKey: "overlayPosition"); overlay.position = newValue }
-    }
-    private var playSounds: Bool {
-        get { defaults.object(forKey: "playSounds") as? Bool ?? true }
-        set { defaults.set(newValue, forKey: "playSounds") }
-    }
-    /// nil = Auto (choose from the frontmost app).
-    private var modeOverride: DictationMode? {
-        get { defaults.string(forKey: "modeOverride").flatMap(DictationMode.init(rawValue:)) }
-        set { defaults.set(newValue?.rawValue, forKey: "modeOverride") }
-    }
-    private var richPaste: Bool {
-        get { defaults.object(forKey: "richPaste") as? Bool ?? true }
-        set { defaults.set(newValue, forKey: "richPaste") }
-    }
-    /// nil = system default input.
-    private var inputDeviceUID: String? {
-        get { defaults.string(forKey: "inputDeviceUID") }
-        set { defaults.set(newValue, forKey: "inputDeviceUID"); dictation.inputDeviceUID = newValue }
-    }
-    private var hotKeyLabel: String { HotKey.presets[hotKeyIndex].label }
-    /// Hold to talk: hold the hotkey while speaking and release it to finish. Off = press to start and to stop.
-    private var holdToTalk: Bool {
-        get { defaults.bool(forKey: "holdToTalk") }
-        set { defaults.set(newValue, forKey: "holdToTalk") }
-    }
+    private var hotKeyLabel: String { settings.hotKey.label }
     /// When the hotkey went down in hold-to-talk mode.
     private var holdStartedAt: Date?
     /// Set when a hold-to-talk press was too short, so the overlay explains instead of saying "Cancelled".
     private var showHoldHint = false
+
+    private var actions: AppActions {
+        AppActions(
+            testMicrophone: { [weak self] in self?.testMicrophone() },
+            testCleanup: { [weak self] sample, completion in self?.dictation.testCleanup(sample, completion: completion) },
+            openSetup: { [weak self] in self?.setupWindow.show() },
+            openSettings: { [weak self] in self?.settingsWindow.show() })
+    }
 
     func applicationDidFinishLaunching(_ notification: Notification) {
         guard let script = Bundle.main.url(forResource: "dictate", withExtension: "sh") else {
@@ -91,23 +45,20 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
             return
         }
         dictation = Dictation(scriptURL: script)
-        dictation.refine = refine
-        dictation.claudeModel = claudeModel
-        dictation.cleanupEngine = cleanupEngine
-        dictation.s1Fallback = s1Fallback
-        dictation.inputDeviceUID = inputDeviceUID
         dictation.onStateChange = { [weak self] state in self?.stateChanged(state) }
         dictation.onLevel = { [weak self] level in self?.overlay.push(level: level) }
         dictation.onFinish = { [weak self] outcome in self?.finished(outcome) }
-        dictation.contextProvider = { [weak self] in DictationContext.current(override: self?.modeOverride) }
-        overlay.isEnabled = showOverlay
-        overlay.position = overlayPosition
+        dictation.contextProvider = { [weak self] in
+            DictationContext.current(override: self?.settings.modeOverride, custom: self?.settings.appModes ?? [:])
+        }
+        overlay.isEnabled = settings.showOverlay
+        overlay.position = settings.overlayPosition
 
         statusItem = NSStatusBar.system.statusItem(withLength: NSStatusItem.variableLength)
         let menu = NSMenu()
         menu.delegate = self
         statusItem.menu = menu
-        updateIcon(.idle)
+        menuBarIcon = MenuBarIcon(button: statusItem.button!)
 
         if let index = CommandLine.arguments.firstIndex(of: "--overlay-snapshots"),
            index + 1 < CommandLine.arguments.count {
@@ -118,11 +69,18 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
             }
             return
         }
+        if let index = CommandLine.arguments.firstIndex(of: "--settings-snapshots"),
+           index + 1 < CommandLine.arguments.count {
+            claude.refresh()
+            SettingsSnapshots.render(to: URL(fileURLWithPath: CommandLine.arguments[index + 1]), actions: actions,
+                                     lastResult: lastResultModel) { NSApp.terminate(nil) }
+            return
+        }
         if let index = CommandLine.arguments.firstIndex(of: "--recorder-selftest"),
            index + 1 < CommandLine.arguments.count {
             let pinDefault = CommandLine.arguments.contains("--pin-default")
             runRecorderSelfTest(report: URL(fileURLWithPath: CommandLine.arguments[index + 1]),
-                                deviceUID: pinDefault ? AudioDevices.defaultInput()?.uid : inputDeviceUID)
+                                deviceUID: pinDefault ? AudioDevices.defaultInput()?.uid : settings.inputDeviceUID)
             return
         }
         if CommandLine.arguments.contains("--overlay-demo") {
@@ -130,10 +88,71 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
             return
         }
         registerHotKey()
-        requestMicrophoneIfNeeded()
-        if !AXIsProcessTrusted() { promptAccessibility() }
+        observeSettings()
+        claude.refresh()
+        models.onInstalled = { [weak self] model in self?.modelInstalled(model) }
         refreshS1Status()
         updateS1Server()
+        warmUpNewHelpers()
+        updater.checkIfDue()
+        updateTimer = Timer.scheduledTimer(withTimeInterval: 3600, repeats: true) { [weak self] _ in
+            self?.updater.checkIfDue()
+        }
+        if settings.setupCompleted && !AppLocation.needsMove {
+            requestMicrophoneIfNeeded()
+            if !AXIsProcessTrusted() { Permissions.promptAccessibility() }
+        } else {
+            setupWindow.show()
+        }
+    }
+
+    /// Applies setting changes made anywhere (menu, Settings, setup).
+    private func observeSettings() {
+        settings.$hotKey.dropFirst().removeDuplicates().sink { [weak self] _ in
+            DispatchQueue.main.async { self?.registerHotKey() }
+        }.store(in: &subscriptions)
+        settings.$isRecordingHotKey.dropFirst().removeDuplicates().sink { [weak self] recording in
+            // The recorder needs the key events: a registered hotkey would swallow its own combo.
+            if recording { self?.hotKey = nil } else { DispatchQueue.main.async { self?.registerHotKey() } }
+        }.store(in: &subscriptions)
+        settings.$showOverlay.dropFirst().sink { [weak self] in self?.overlay.isEnabled = $0 }.store(in: &subscriptions)
+        settings.$overlayPosition.dropFirst().removeDuplicates().sink { [weak self] position in
+            self?.overlay.position = position
+            self?.overlay.finish(.message("Overlay position", isError: false), after: 1.2) // preview where it appears
+        }.store(in: &subscriptions)
+        Publishers.CombineLatest(settings.$refine, settings.$cleanupEngine).dropFirst().sink { [weak self] _ in
+            DispatchQueue.main.async { self?.updateS1Server() }
+        }.store(in: &subscriptions)
+        settings.$whisperModel.dropFirst().removeDuplicates().sink { [weak self] _ in
+            self?.dictation.reloadWhisperModel()
+        }.store(in: &subscriptions)
+    }
+
+    /// After an install, an update or a move (e.g. from the DMG to Applications), the bundled servers compile their Metal
+    /// shaders on first launch (10–20 s; macOS caches the result per binary and location). Do it now, in the background,
+    /// instead of during the first dictation.
+    private func warmUpNewHelpers() {
+        let helper = Bundle.main.bundleURL.appendingPathComponent("Contents/Helpers/whisper-server")
+        guard let attributes = try? FileManager.default.attributesOfItem(atPath: helper.path),
+              let modified = attributes[.modificationDate] as? Date else { return }
+        let stamp = "\(Updater.currentVersion)-\(Int(modified.timeIntervalSince1970))-\(Bundle.main.bundlePath)"
+        guard UserDefaults.standard.string(forKey: "warmedHelpers") != stamp else { return }
+        UserDefaults.standard.set(stamp, forKey: "warmedHelpers")
+        if ModelCatalog.whisperModel(named: settings.whisperModel)?.isInstalled == true {
+            dictation.warmUp("whisper-server")
+        }
+        if ModelCatalog.s1Mini.isInstalled && !settings.usesS1 { dictation.warmUp("s1-server") }
+    }
+
+    /// A download finished: load it once now, so the bundled build's first-launch shader compile doesn't slow
+    /// down the first dictation.
+    private func modelInstalled(_ model: ModelFile) {
+        if model == ModelCatalog.s1Mini {
+            refreshS1Status()
+            if settings.usesS1 { updateS1Server() } else { dictation.warmUp("s1-server") }
+        } else if model.fileName == settings.whisperModel {
+            dictation.warmUp("whisper-server")
+        }
     }
 
     func applicationWillTerminate(_ notification: Notification) {
@@ -145,13 +164,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     private func refreshS1Status() {
         dictation.server("s1-server", ["status"]) { [weak self] _, output in
             self?.s1Installed = output.trimmingCharacters(in: .whitespacesAndNewlines) != "missing"
+                && ModelCatalog.s1Mini.isInstalled
         }
     }
 
     /// Keeps S1-mini loaded while it's the selected cleanup; otherwise lets it stop after idling
     /// (a Claude fallback starts it on demand).
     private func updateS1Server() {
-        dictation.server("s1-server", usesS1 ? ["start", "--keep"] : ["release"])
+        dictation.server("s1-server", settings.usesS1 ? ["start", "--keep"] : ["release"])
     }
 
     /// Records 2 s from the selected mic and writes a one-line report (for development: checks that
@@ -192,6 +212,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     private func runOverlayDemo() {
         overlay.isEnabled = true
         overlay.showRecording()
+        menuBarIcon.setActive(true)
         var tick = 0.0
         let levels = Timer.scheduledTimer(withTimeInterval: 1.0 / 45, repeats: true) { [weak self] _ in
             tick += 1
@@ -201,7 +222,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         let steps: [(TimeInterval, () -> Void)] = [
             (4.0, { levels.invalidate(); self.overlay.show(.transcribing) }),
             (6.0, { self.overlay.show(.polishing(offline: false)) }),
-            (8.5, { self.overlay.finish(.success("Pasted"), after: 1.5) }),
+            (8.5, { self.overlay.finish(.success("Pasted"), after: 1.5); self.menuBarIcon.setActive(false) }),
             (10.5, { self.overlay.finish(.message("No speech detected", isError: false), after: 1.5) }),
             (12.5, { self.overlay.finish(.message("Transcription failed", isError: true), after: 1.5) }),
             (14.5, { NSApp.terminate(nil) }),
@@ -238,7 +259,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
             play("Pop")
             overlay.show(.transcribing)
         case .polishing:
-            overlay.show(.polishing(offline: usesS1))
+            overlay.show(.polishing(offline: settings.usesS1))
         case .idle, .testingMic:
             break
         }
@@ -249,12 +270,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         case .text(let text, let cleanupFailed, let offlineFallback, let context, let timing):
             lastResult = text
             // Rich text only helps where lists render; terminals and editors get plain text.
-            let html = richPaste && context.mode != .code && RichText.containsList(text)
+            let html = settings.richPaste && context.mode != .code && RichText.containsList(text)
                 ? RichText.html(from: text) : nil
-            let pasted = Paster.paste(text, html: html, autoPaste: autoPaste)
+            let pasted = Paster.paste(text, html: html, autoPaste: settings.autoPaste)
             let modeSuffix = context.mode == .default ? "" : " · \(context.mode.title)"
             let label: String
-            if !autoPaste {
+            if !settings.autoPaste {
                 label = "Copied" + modeSuffix
             } else if !pasted {
                 label = "Copied. Press ⌘V (allow Accessibility to auto-paste)"
@@ -265,6 +286,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
             AppLog.write("RESULT \(pasted ? "pasted" : "copied") mode=\(context.mode.rawValue) app=\"\(context.appName)\" "
                 + "chars=\(text.count) rich=\(html != nil) cleanupFailed=\(cleanupFailed) offlineFallback=\(offlineFallback)")
             let total = Int(Date().timeIntervalSince(timing.stoppedAt) * 1000)
+            let engine = cleanupFailed ? "no cleanup" : offlineFallback || settings.usesS1 ? "S1-mini"
+                : settings.refine && context.mode != .raw ? "Claude" : "no cleanup"
+            lastResultModel.summary = "It worked: \(String(format: "%.1f", Double(total) / 1000)) s after you stopped, "
+                + "cleaned up with \(engine)."
             AppLog.write("TIMING stop→transcript=\(timing.transcribeMs)ms transcript→cleaned=\(timing.cleanupMs)ms "
                 + "cleaned→pasted=\(total - timing.transcribeMs - timing.cleanupMs)ms total=\(total)ms "
                 + "prestarted=\(timing.prestarted) mode=\(context.mode.rawValue)")
@@ -289,38 +314,40 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     }
 
     private func play(_ sound: String) {
-        guard playSounds else { return }
+        guard settings.playSounds else { return }
         NSSound(named: NSSound.Name(sound))?.play()
     }
 
     private func updateIcon(_ state: Dictation.State) {
-        guard let button = statusItem.button else { return }
-        let (symbol, tint): (String, NSColor?) = switch state {
-        case .idle: ("mic", nil)
-        case .starting, .recording: ("mic.fill", .systemRed)
-        case .transcribing, .polishing: ("waveform", .systemOrange)
-        case .testingMic: ("mic.fill", .systemBlue)
-        }
-        let image = NSImage(systemSymbolName: symbol, accessibilityDescription: "Voice to Text")
-        image?.isTemplate = true
-        button.image = image
-        button.contentTintColor = tint
+        menuBarIcon.setActive(state != .idle)
     }
 
     // MARK: - Hotkey
 
     private func registerHotKey() {
         hotKey = nil
-        hotKey = HotKey(HotKey.presets[hotKeyIndex], onRelease: { [weak self] in self?.hotKeyReleased() }) { [weak self] in
+        guard !settings.isRecordingHotKey else { return }
+        hotKey = HotKey(settings.hotKey, onRelease: { [weak self] in self?.hotKeyReleased() }) { [weak self] in
             self?.hotKeyPressed()
         }
+        settings.hotKeyError = hotKey == nil ? "\(hotKeyLabel) is used by another app. Pick another." : nil
         if hotKey == nil {
-            notify("\(hotKeyLabel) is used by another app. Pick a different hotkey from the menu.")
+            notify("\(hotKeyLabel) is used by another app. Pick a different hotkey in Settings.")
         }
     }
 
+    /// No speech model yet (a new Mac before setup finished): open setup instead of failing to transcribe.
+    private func speechModelMissing() -> Bool {
+        guard dictation.state == .idle,
+              !(ModelCatalog.whisperModel(named: settings.whisperModel)?.isInstalled ?? false) else { return false }
+        overlay.finish(.message("Download a speech model first", isError: false), after: 2.0)
+        setupWindow.show()
+        return true
+    }
+
     private func hotKeyPressed() {
-        guard holdToTalk else { return dictation.toggle() }
+        guard !speechModelMissing() else { return }
+        guard settings.holdToTalk else { return dictation.toggle() }
         guard dictation.state == .idle else { return }
         holdStartedAt = Date()
         dictation.start()
@@ -328,7 +355,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
 
     /// Hold to talk: releasing the hotkey stops and pastes. A press under 0.3 s is treated as an accidental tap.
     private func hotKeyReleased() {
-        guard holdToTalk, let started = holdStartedAt else { return }
+        guard settings.holdToTalk, let started = holdStartedAt else { return }
         holdStartedAt = nil
         if Date().timeIntervalSince(started) < 0.3 {
             showHoldHint = true
@@ -342,18 +369,26 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
 
     // MARK: - Menu
 
+    /// A short menu for quick switches; everything else is in the Settings window.
     func menuNeedsUpdate(_ menu: NSMenu) {
         menu.removeAllItems()
+        let hold = settings.holdToTalk
 
         let status: String = switch dictation.state {
-        case .idle: "Ready. \(holdToTalk ? "Hold" : "Press") \(hotKeyLabel) to dictate"
+        case .idle: "Ready. \(hold ? "Hold" : "Press") \(hotKeyLabel) to dictate"
         case .starting: "Starting \(dictation.deviceName)…"
-        case .recording: "Recording… \(holdToTalk ? "Release" : "Press") \(hotKeyLabel) to finish, Esc to cancel"
+        case .recording: "Recording… \(hold ? "Release" : "Press") \(hotKeyLabel) to finish, Esc to cancel"
         case .testingMic: "Testing \(dictation.deviceName)…"
         case .transcribing: "Transcribing…"
-        case .polishing: usesS1 ? "Polishing with S1-mini…" : "Polishing with Claude…"
+        case .polishing: settings.usesS1 ? "Polishing with S1-mini…" : "Polishing with Claude…"
         }
         menu.addItem(disabled(status))
+        if let release = updater.available {
+            menu.addItem(item("Update Available (\(release.version))…", #selector(openUpdate)))
+        }
+        if !settings.setupCompleted || AppLocation.needsMove {
+            menu.addItem(item("Finish Setting Up…", #selector(openSetup)))
+        }
         menu.addItem(.separator())
 
         switch dictation.state {
@@ -365,131 +400,78 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
             menu.addItem(item("Cancel Recording", #selector(cancelDictation)))
         case .transcribing, .polishing: menu.addItem(disabled("Working…"))
         }
-
         if let lastResult {
             let preview = lastResult.count > 50 ? String(lastResult.prefix(50)) + "…" : lastResult
             menu.addItem(item("Copy Last: \(preview)", #selector(copyLast)))
         }
 
         menu.addItem(.separator())
-        menu.addItem(item("Clean Up Text", #selector(toggleRefine), checked: refine))
-        menu.addItem(cleanupModelMenuItem())
-        menu.addItem(item("Paste Automatically", #selector(toggleAutoPaste), checked: autoPaste))
-        menu.addItem(item("Paste Lists as Rich Text", #selector(toggleRichPaste), checked: richPaste))
         menu.addItem(modeMenuItem())
-
-        let hotKeyMenu = NSMenu()
-        for (index, combo) in HotKey.presets.enumerated() {
-            let entry = item(combo.label, #selector(selectHotKey(_:)), checked: index == hotKeyIndex)
-            entry.tag = index
-            hotKeyMenu.addItem(entry)
-        }
-        hotKeyMenu.addItem(.separator())
-        hotKeyMenu.addItem(item("Press to Start and Stop", #selector(selectToggleMode), checked: !holdToTalk))
-        hotKeyMenu.addItem(item("Hold to Talk", #selector(selectHoldToTalk), checked: holdToTalk))
-        menu.addItem(submenu("Hotkey: \(hotKeyLabel)\(holdToTalk ? " (hold)" : "")", hotKeyMenu))
+        menu.addItem(cleanupMenuItem())
         menu.addItem(microphoneMenuItem())
 
         menu.addItem(.separator())
-        menu.addItem(item("Show Overlay", #selector(toggleOverlay), checked: showOverlay))
-        let positionMenu = NSMenu()
-        for (title, position) in [("Bottom", OverlayController.Position.bottom), ("Top", .top)] {
-            let entry = item(title, #selector(selectOverlayPosition(_:)), checked: overlayPosition == position)
-            entry.representedObject = position.rawValue
-            positionMenu.addItem(entry)
-        }
-        let positionItem = submenu("Overlay Position", positionMenu)
-        menu.addItem(positionItem)
-        menu.addItem(item("Play Sounds", #selector(toggleSounds), checked: playSounds))
-
-        menu.addItem(.separator())
-        let micOK = AVCaptureDevice.authorizationStatus(for: .audio) == .authorized
-        menu.addItem(item(micOK ? "Microphone: Allowed ✓" : "Microphone: Not Allowed. Click to Fix",
-                          #selector(fixMicrophone)))
-        let axOK = AXIsProcessTrusted()
-        menu.addItem(item(axOK ? "Accessibility: Allowed ✓" : "Accessibility: Not Allowed. Click to Fix",
-                          #selector(fixAccessibility)))
-
-        menu.addItem(.separator())
-        menu.addItem(item("Launch at Login", #selector(toggleLaunchAtLogin),
-                          checked: SMAppService.mainApp.status == .enabled))
-        menu.addItem(item("Edit Dictionary…", #selector(openDictionary)))
-        menu.addItem(item("Edit Config…", #selector(openConfig)))
-        menu.addItem(item("Open Log", #selector(openLog)))
+        menu.addItem(item("Settings…", #selector(openSettingsWindow), key: ","))
+        menu.addItem(item("Set Up…", #selector(openSetup)))
         menu.addItem(.separator())
         menu.addItem(item("Quit Voice to Text", #selector(quit), key: "q"))
     }
 
-    private func cleanupModelMenuItem() -> NSMenuItem {
+    private func cleanupMenuItem() -> NSMenuItem {
         refreshS1Status() // for the next time the menu opens
-        let installed = s1Installed ?? true
+        let installed = s1Installed ?? ModelCatalog.s1Mini.isInstalled
         let menu = NSMenu()
-        let claudeModels = [("Claude Haiku (fastest)", "haiku"), ("Claude Sonnet (smarter)", "sonnet")]
-        for (title, model) in claudeModels {
-            let entry = item(title, #selector(selectModel(_:)), checked: cleanupEngine == "claude" && claudeModel == model)
+        menu.addItem(item("Off (paste Whisper's text)", #selector(selectCleanupOff), checked: !settings.refine))
+        menu.addItem(.separator())
+        for (title, model) in [("Claude Haiku (fastest)", "haiku"), ("Claude Sonnet (smarter)", "sonnet")] {
+            let entry = item(title, #selector(selectModel(_:)),
+                             checked: settings.refine && settings.cleanupEngine == "claude" && settings.claudeModel == model)
             entry.representedObject = model
             menu.addItem(entry)
         }
-        menu.addItem(.separator())
-        let s1Item = item(installed ? "S1-mini (offline)" : "S1-mini (not installed)", #selector(selectS1),
-                          checked: cleanupEngine == "s1")
+        let s1Item = item(installed ? "S1-mini (offline)" : "S1-mini (download in Settings)", #selector(selectS1),
+                          checked: settings.usesS1)
         s1Item.isEnabled = installed
         menu.addItem(s1Item)
-        let fallbackItem = item("Use S1-mini When Claude Is Unavailable", #selector(toggleS1Fallback),
-                                checked: s1Fallback && installed)
-        fallbackItem.isEnabled = installed && cleanupEngine == "claude"
-        menu.addItem(fallbackItem)
         menu.addItem(.separator())
-        if installed {
-            menu.addItem(disabled("S1-mini by Superwhisper runs on this Mac:"))
-            menu.addItem(disabled("no internet needed, English only."))
-            menu.addItem(disabled("It skips Code mode (editors, terminals): raw text."))
-        } else {
-            menu.addItem(disabled("Run scripts/install.sh to install S1-mini"))
-            menu.addItem(disabled("(offline cleanup, about 500 MB)."))
-        }
+        menu.addItem(item("Cleanup Settings…", #selector(openCleanupSettings)))
         menu.autoenablesItems = false
 
-        let current = cleanupEngine == "s1" ? "S1-mini"
-            : claudeModels.first { $0.1 == claudeModel }.map { $0.0.components(separatedBy: " (")[0] } ?? "Claude"
-        return submenu("Cleanup Model: \(current)", menu)
+        let current = !settings.refine ? "Off" : settings.cleanupEngine == "s1" ? "S1-mini"
+            : "Claude \(settings.claudeModel.capitalized)"
+        return submenu("Clean Up With: \(current)", menu)
     }
 
     private func modeMenuItem() -> NSMenuItem {
         let menu = NSMenu()
-        let autoTitle = "Auto (by app)"
-        menu.addItem(item(autoTitle, #selector(selectMode(_:)), checked: modeOverride == nil))
+        menu.addItem(item("Auto (by app)", #selector(selectMode(_:)), checked: settings.modeOverride == nil))
         menu.addItem(.separator())
         for mode in DictationMode.allCases {
-            let entry = item(mode.title, #selector(selectMode(_:)), checked: modeOverride == mode)
+            let entry = item(mode.title, #selector(selectMode(_:)), checked: settings.modeOverride == mode)
             entry.representedObject = mode.rawValue
             menu.addItem(entry)
         }
-        menu.addItem(.separator())
-        menu.addItem(disabled("Auto picks Chat for Slack/Teams, Email for Mail,"))
-        menu.addItem(disabled("Code for editors and terminals, Notes for Notes/Notion."))
-        return submenu("Mode: \(modeOverride?.title ?? "Auto")", menu)
+        return submenu("Mode: \(settings.modeOverride?.title ?? "Auto")", menu)
     }
 
     private func microphoneMenuItem() -> NSMenuItem {
         let devices = AudioDevices.inputDevices()
         let systemDefault = AudioDevices.defaultInput()
-        let selected = inputDeviceUID.flatMap { uid in devices.first { $0.uid == uid } }
+        let selected = settings.inputDeviceUID.flatMap { uid in devices.first { $0.uid == uid } }
         let menu = NSMenu()
 
         let defaultTitle = "System Default" + (systemDefault.map { " (\($0.name))" } ?? "")
-        let defaultItem = item(defaultTitle, #selector(selectMicrophone(_:)), checked: inputDeviceUID == nil)
-        menu.addItem(defaultItem)
+        menu.addItem(item(defaultTitle, #selector(selectMicrophone(_:)), checked: settings.inputDeviceUID == nil))
         menu.addItem(.separator())
         for device in devices {
             let title = device.name + (device.isBluetooth ? " (Bluetooth)" : "")
-            let entry = item(title, #selector(selectMicrophone(_:)), checked: device.uid == inputDeviceUID)
+            let entry = item(title, #selector(selectMicrophone(_:)), checked: device.uid == settings.inputDeviceUID)
             entry.representedObject = device.uid
             menu.addItem(entry)
         }
-        if let uid = inputDeviceUID, selected == nil {
+        if let uid = settings.inputDeviceUID, selected == nil {
             // The chosen mic isn't connected; recording falls back to the system default.
-            let missing = disabled("\(defaults.string(forKey: "inputDeviceName") ?? uid) (not connected)")
+            let missing = disabled("\(settings.inputDeviceName ?? uid) (not connected)")
             missing.state = .on
             menu.addItem(missing)
         }
@@ -531,60 +513,44 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
 
     // MARK: - Actions
 
-    @objc private func toggleDictation() { dictation.toggle() }
+    @objc private func toggleDictation() {
+        guard !speechModelMissing() else { return }
+        dictation.toggle()
+    }
     @objc private func cancelDictation() { dictation.cancel() }
-    @objc private func toggleRefine() {
-        refine.toggle()
-        updateS1Server()
+    @objc private func openSettingsWindow() { settingsWindow.show() }
+    @objc private func openCleanupSettings() { settingsWindow.show(.cleanup) }
+    @objc private func openSetup() { setupWindow.show() }
+    @objc private func openUpdate() { updater.openReleasePage() }
+
+    @objc private func selectCleanupOff() { settings.refine = false }
+
+    @objc private func selectModel(_ sender: NSMenuItem) {
+        guard let model = sender.representedObject as? String else { return }
+        settings.claudeModel = model
+        settings.cleanupEngine = "claude"
+        settings.refine = true
     }
 
     @objc private func selectS1() {
-        cleanupEngine = "s1"
-        updateS1Server()
+        settings.cleanupEngine = "s1"
+        settings.refine = true
     }
-
-    @objc private func toggleS1Fallback() { s1Fallback.toggle() }
-    @objc private func toggleAutoPaste() { autoPaste.toggle() }
-    @objc private func toggleOverlay() { showOverlay.toggle() }
-    @objc private func toggleRichPaste() { richPaste.toggle() }
 
     @objc private func selectMode(_ sender: NSMenuItem) {
-        modeOverride = (sender.representedObject as? String).flatMap(DictationMode.init(rawValue:))
-    }
-
-    @objc private func openDictionary() {
-        if !FileManager.default.fileExists(atPath: dictionaryURL.path) {
-            try? FileManager.default.createDirectory(at: dictionaryURL.deletingLastPathComponent(),
-                                                     withIntermediateDirectories: true)
-            let template = """
-                # Voice to Text dictionary
-                #
-                # One name or term per line: Whisper and Claude will spell it exactly like this.
-                #   Claude Code
-                #   PostgreSQL
-                #
-                # Replacements, applied after cleanup: heard => wanted
-                #   cloud code => Claude Code
-                #   super whisper => Superwhisper
-
-                """
-            try? template.write(to: dictionaryURL, atomically: true, encoding: .utf8)
-        }
-        NSWorkspace.shared.open([dictionaryURL], withApplicationAt: URL(fileURLWithPath: "/System/Applications/TextEdit.app"),
-                                configuration: NSWorkspace.OpenConfiguration())
+        settings.modeOverride = (sender.representedObject as? String).flatMap(DictationMode.init(rawValue:))
     }
 
     @objc private func selectMicrophone(_ sender: NSMenuItem) {
         let uid = sender.representedObject as? String
-        inputDeviceUID = uid
-        let name = uid.flatMap(AudioDevices.device(uid:))?.name
-        defaults.set(name, forKey: "inputDeviceName")
+        settings.inputDeviceUID = uid
+        settings.inputDeviceName = uid.flatMap(AudioDevices.device(uid:))?.name
     }
 
     @objc private func testMicrophone() {
         guard dictation.state == .idle else { return }
         overlay.isEnabled = true // always show the test, even if the overlay is turned off
-        overlay.show(.connecting(AudioDevices.device(uid: inputDeviceUID ?? "")?.name
+        overlay.show(.connecting(AudioDevices.device(uid: settings.inputDeviceUID ?? "")?.name
             ?? AudioDevices.defaultInput()?.name ?? "microphone"))
         dictation.testMicrophone(duration: 4, onReady: { [weak self] in
             guard let self else { return }
@@ -604,82 +570,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
                 self.play("Basso")
                 self.overlay.finish(.message(error.localizedDescription, isError: true), after: 3.5)
             }
-            self.overlay.isEnabled = self.showOverlay
+            self.overlay.isEnabled = self.settings.showOverlay
         })
-    }
-    @objc private func toggleSounds() { playSounds.toggle() }
-
-    @objc private func selectOverlayPosition(_ sender: NSMenuItem) {
-        if let raw = sender.representedObject as? String, let position = OverlayController.Position(rawValue: raw) {
-            overlayPosition = position
-            // Preview where it will appear.
-            overlay.finish(.message("Overlay position", isError: false), after: 1.2)
-        }
     }
 
     @objc private func copyLast() {
         guard let lastResult else { return }
         NSPasteboard.general.clearContents()
         NSPasteboard.general.setString(lastResult, forType: .string)
-    }
-
-    @objc private func selectModel(_ sender: NSMenuItem) {
-        guard let model = sender.representedObject as? String else { return }
-        claudeModel = model
-        cleanupEngine = "claude"
-        updateS1Server()
-    }
-
-    @objc private func selectToggleMode() { holdToTalk = false }
-    @objc private func selectHoldToTalk() { holdToTalk = true }
-
-    @objc private func selectHotKey(_ sender: NSMenuItem) {
-        hotKeyIndex = sender.tag
-        registerHotKey()
-    }
-
-    @objc private func fixMicrophone() {
-        if AVCaptureDevice.authorizationStatus(for: .audio) == .notDetermined {
-            requestMicrophoneIfNeeded()
-        } else {
-            openSettings("Privacy_Microphone")
-        }
-    }
-
-    @objc private func fixAccessibility() {
-        promptAccessibility()
-        openSettings("Privacy_Accessibility")
-    }
-
-    @objc private func toggleLaunchAtLogin() {
-        do {
-            if SMAppService.mainApp.status == .enabled {
-                try SMAppService.mainApp.unregister()
-            } else {
-                try SMAppService.mainApp.register()
-            }
-        } catch {
-            notify("Could not change Launch at Login: \(error.localizedDescription)")
-        }
-    }
-
-    @objc private func openConfig() {
-        if !FileManager.default.fileExists(atPath: configURL.path) {
-            try? FileManager.default.createDirectory(at: configURL.deletingLastPathComponent(),
-                                                     withIntermediateDirectories: true)
-            try? "# voice-to-text config, see scripts/config.example.sh\n"
-                .write(to: configURL, atomically: true, encoding: .utf8)
-        }
-        NSWorkspace.shared.open([configURL], withApplicationAt: URL(fileURLWithPath: "/System/Applications/TextEdit.app"),
-                                configuration: NSWorkspace.OpenConfiguration())
-    }
-
-    @objc private func openLog() {
-        if FileManager.default.fileExists(atPath: logURL.path) {
-            NSWorkspace.shared.open(logURL)
-        } else {
-            notify("No log yet. Dictate something first.")
-        }
     }
 
     @objc private func quit() {
@@ -692,17 +590,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     private func requestMicrophoneIfNeeded() {
         guard AVCaptureDevice.authorizationStatus(for: .audio) == .notDetermined else { return }
         AVCaptureDevice.requestAccess(for: .audio) { _ in }
-    }
-
-    private func promptAccessibility() {
-        let key = kAXTrustedCheckOptionPrompt.takeUnretainedValue() as String
-        _ = AXIsProcessTrustedWithOptions([key: true] as CFDictionary)
-    }
-
-    private func openSettings(_ pane: String) {
-        if let url = URL(string: "x-apple.systempreferences:com.apple.preference.security?\(pane)") {
-            NSWorkspace.shared.open(url)
-        }
     }
 
     private func notify(_ message: String) {

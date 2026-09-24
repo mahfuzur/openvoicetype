@@ -45,8 +45,9 @@ post-processing, rich paste, and the eval harness (`evals/`). Eval: 30% → **10
 | M2 | Formatting quality | 2 days | ✅ Done (2026-09-23) | Lists, paragraphs, spoken commands, app-aware style |
 | M2.5 | Offline cleanup with S1-mini | 1–2 days | ✅ Done (2026-09-24) | Works with no internet; a fully on-device option |
 | M3 | Native pipeline and speed | 3–4 days | ✅ Done (2026-09-24): about 2× faster; ≤ 3 s for short dictations | Around 2–3 s total, needed before a public release |
-| M4 | Settings window and providers | 4–5 days | Not started | Turns it into a platform: pick Claude, Codex, Gemini, Ollama or an API |
-| M5 | Open-source release | 2–3 days | Partly done (license, CI, docs) | Name, license, CI, signing, docs |
+| M4 | Settings window, first-run setup and DMG | 7–9 days | ◐ Built (2026-09-24); clean-install test pending ([plan](plans/M4-app-and-install.md)) | Anyone can install it from a DMG with no Homebrew or Terminal, and set it up in a real window |
+| M5 | Open-source release | 2–3 days | Partly done (license, CI, docs) | Name, terms check, demo, the first tagged DMG |
+| M6 | More providers | 3–4 days | Not started | Turns it into a platform: pick Codex, Gemini, Ollama or an API as well as Claude and S1-mini |
 
 M3 matters most for adoption: people don't keep using a slow dictation tool.
 
@@ -215,9 +216,15 @@ Target: **≤ 3 s** from stopping to pasted text, for 15 s of speech (**≤ 1.5 
 - **Push-to-talk** (Carbon key release) alongside toggle mode, plus an `APP TIMING` log line per dictation.
 - The bash pipeline stays: both wins come from keeping processes warm. The Swift `Transcriber`/`Refiner` protocols move to M4.
 
-## M4: Settings window and providers ("platform")
+## M4: Settings window, first-run setup and DMG
 
-A SwiftUI settings window with these tabs:
+> **Detailed plan and task tracking:** [plans/M4-app-and-install.md](plans/M4-app-and-install.md)
+
+Rescoped on 2026-09-24: a self-contained app (Whisper and llama.cpp built into the bundle, models downloaded during setup),
+a first-run setup that installs or finds the Claude CLI and uses S1-mini meanwhile, a Settings window, and a DMG release.
+Providers other than Claude and S1-mini move to M6. Modes prompt editing and History are later.
+
+The original idea for the settings window (the plan has the final list):
 - **General:** hotkey recorder (any combination), toggle or push-to-talk, overlay, sounds, launch at login.
 - **Transcription:** model manager that downloads tiny, base, small or large-v3-turbo from Hugging Face with progress,
   so there's no dependency on Superwhisper's folder. Also language and vocabulary.
@@ -226,6 +233,8 @@ A SwiftUI settings window with these tabs:
 - **Dictionary:** replacements and vocabulary.
 - **History:** the last N dictations (raw and cleaned). Copy or re-run one with another mode.
 - **Onboarding:** a first-run wizard for the Microphone and Accessibility permissions, model download, provider choice and a test dictation.
+
+## M6: More providers ("platform")
 
 **Providers** (a `Refiner` protocol with one implementation each):
 
@@ -248,8 +257,9 @@ Installed CLIs are detected automatically by resolving the user's login-shell `P
 - **License:** MIT (my recommendation, the most permissive) or GPL-3 (like VoiceInk). Don't copy code from GPL projects into an MIT repo.
 - **Toolchain:** install Xcode locally, because contributors and CI expect it. GitHub Actions on a macOS runner builds, tests
   and attaches the `.app` to each release.
-- **Distribution:** a **signed and notarized** DMG needs the Apple Developer Program ($99 a year). Without it, users see
-  Gatekeeper warnings and lose permission grants on every update. Until then, publish a Homebrew cask or build-from-source steps.
+- **Distribution:** the DMG and release workflow are built in M4. A **signed and notarized** DMG needs the Apple Developer
+  Program ($99 a year); without it, users click Open Anyway once, and a self-signed release certificate keeps permission grants
+  across updates (see the M4 plan).
 - **Docs:** a README with a demo GIF, a privacy section (what leaves the machine: only the transcript text, and only to the
   provider the user picks), CONTRIBUTING, issue templates and a CHANGELOG.
 - **Terms check:** before advertising "use your Claude/ChatGPT subscription", check each provider's terms for scripted
@@ -290,4 +300,6 @@ These are the two features, from comparing with Wispr Flow and Typeless, that ar
 
 M3 is done (see [plans/M3-speed.md](plans/M3-speed.md)): about twice as fast. Real dictations take 2.7 s (8 s of speech) to
 3.5–5.7 s (17–22 s of speech), from 6–9 s before; S1-mini takes about 1.5 s. What's left is Claude generating the text; the
-plan lists ideas for later. Next: M4 (settings window and providers) or a v0.1 release (M5).
+plan lists ideas for later. M4 is built ([plans/M4-app-and-install.md](plans/M4-app-and-install.md)): a self-contained app and DMG, first-run setup, a
+Settings window and a release workflow. Next: the clean-install test on a new Mac or VM (download, Open Anyway, setup, an update
+keeping permissions), then the release certificate secrets and the first tag (M5).
