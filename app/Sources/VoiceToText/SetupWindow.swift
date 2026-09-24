@@ -83,12 +83,17 @@ struct SetupView: View {
                     }
                 }
                 step(first + 1, "Accessibility", done: axAllowed,
-                     detail: "To paste the text into the app you're using. Turn on Voice to Text in the list that opens. "
-                         + "If it's already on but pasting doesn't work (after an update), remove it with − and add it again.") {
+                     detail: "To paste the text into the app you're using. Turn on Voice to Text in the list that opens.") {
                     if !axAllowed {
                         Button("Open System Settings") {
                             Permissions.promptAccessibility()
                             Permissions.openSettings("Privacy_Accessibility")
+                        }
+                        HStack {
+                            Text("Already switched on, but this step isn't ticked? The entry belongs to an older copy.")
+                                .font(.caption).foregroundColor(.secondary)
+                            Spacer()
+                            Button("Reset and Ask Again") { Permissions.resetAccessibility() }
                         }
                     }
                 }

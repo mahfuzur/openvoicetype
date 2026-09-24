@@ -38,22 +38,37 @@ final class SettingsWindowController: NSWindowController {
 
     func show(_ pane: Pane? = nil) {
         if let pane { tabs.selectedTabViewItemIndex = pane.rawValue }
-        if window?.isVisible == false { window?.center() }
+        if window?.isVisible == false {
+            tabs.fitWindow(animate: false) // the first pane isn't "selected", so nothing else sizes the window for it
+            window?.center()
+        }
         NSApp.activate(ignoringOtherApps: true) // an accessory app's window doesn't come forward by itself
         window?.makeKeyAndOrderFront(nil)
     }
 }
 
-/// Resizes the window to each pane's height, keeping its top edge in place, and titles it after the pane.
+/// Resizes the window to the selected pane, keeping its top edge in place: on every tab change, and when the window
+/// opens (the first pane never gets a "did select", so without that it opened at the placeholder size, clipped).
 final class SettingsTabViewController: NSTabViewController {
     override func tabView(_ tabView: NSTabView, didSelect tabViewItem: NSTabViewItem?) {
         super.tabView(tabView, didSelect: tabViewItem)
-        guard let window = view.window, let size = tabViewItem?.viewController?.view.fittingSize else { return }
+        fitWindow(animate: view.window?.isVisible ?? false)
+    }
+
+    override func viewDidAppear() {
+        super.viewDidAppear()
+        fitWindow(animate: false)
+    }
+
+    func fitWindow(animate: Bool) {
+        guard let window = view.window, let pane = tabView.selectedTabViewItem?.viewController?.view else { return }
+        let size = pane.fittingSize
+        guard size.width > 0, size.height > 0 else { return }
         let content = window.frameRect(forContentRect: NSRect(origin: .zero, size: size))
         var frame = window.frame
         frame.origin.y += frame.height - content.height
         frame.size = content.size
-        window.setFrame(frame, display: true, animate: window.isVisible)
+        window.setFrame(frame, display: true, animate: animate)
     }
 }
 
@@ -119,6 +134,15 @@ struct GeneralPane: View {
                 permissionRow("Accessibility", allowed: axAllowed, why: "to paste into other apps") {
                     Permissions.promptAccessibility()
                     Permissions.openSettings("Privacy_Accessibility")
+                }
+                if !axAllowed {
+                    HStack {
+                        Text("Voice to Text is already switched on in the list, but this still says Needed?")
+                            .font(.caption).foregroundColor(.secondary)
+                        Spacer()
+                        Button("Reset…") { Permissions.resetAccessibility() }
+                            .help("Removes the old entry and asks again. Then switch Voice to Text on in the list.")
+                    }
                 }
             }
         }
@@ -465,6 +489,22 @@ enum Permissions {
     static func promptAccessibility() {
         let key = kAXTrustedCheckOptionPrompt.takeUnretainedValue() as String
         _ = AXIsProcessTrustedWithOptions([key: true] as CFDictionary)
+    }
+
+    /// The Accessibility switch can show "on" for an older copy of the app with a different signature (a local build, or
+    /// before the release certificate), and turning it off and on doesn't fix that. This removes the app's entry
+    /// (`tccutil reset`, only for this app, no password needed) and asks again, so the list gets a fresh one.
+    static func resetAccessibility() {
+        let process = Process()
+        process.executableURL = URL(fileURLWithPath: "/usr/bin/tccutil")
+        process.arguments = ["reset", "Accessibility", Bundle.main.bundleIdentifier ?? "io.github.mahfuzur.voicetotext"]
+        process.standardOutput = FileHandle.nullDevice
+        process.standardError = FileHandle.nullDevice
+        try? process.run()
+        process.waitUntilExit()
+        AppLog.write("PERMISSION accessibility reset (exit \(process.terminationStatus))")
+        promptAccessibility()
+        openSettings("Privacy_Accessibility")
     }
 
     static func openSettings(_ pane: String) {

@@ -10,10 +10,25 @@ set -euo pipefail
 IDENTITY="Voice to Text Local Signing"
 KEYCHAIN="$HOME/Library/Keychains/voice-to-text-signing.keychain-db"
 PASS_FILE="$HOME/.config/voice-to-text/signing-keychain-password"
+RELEASE_IDENTITY="Voice to Text Release"
+RELEASE_P12="$HOME/.config/voice-to-text/release-cert/release.p12"
+
+# Maintainers only: with the release certificate (make-release-cert.sh) in this keychain, build-app.sh signs local builds
+# like releases. macOS ties permission grants to the signature, so switching between a local build and a downloaded
+# release would otherwise lose Accessibility every time (the toggle stays on but no longer applies).
+import_release_cert() {
+  [[ -f "$RELEASE_P12" ]] || return 0
+  security find-certificate -c "$RELEASE_IDENTITY" "$KEYCHAIN" >/dev/null 2>&1 && return 0
+  security unlock-keychain -p "$(cat "$PASS_FILE")" "$KEYCHAIN"
+  security import "$RELEASE_P12" -k "$KEYCHAIN" -P "$(cat "$RELEASE_P12.password")" -T /usr/bin/codesign >/dev/null
+  security set-key-partition-list -S apple-tool:,apple: -s -k "$(cat "$PASS_FILE")" "$KEYCHAIN" >/dev/null
+  echo "Imported the release certificate: local builds are now signed as \"$RELEASE_IDENTITY\""
+}
 
 if [[ -f "$KEYCHAIN" && -f "$PASS_FILE" ]] &&
   security find-certificate -c "$IDENTITY" "$KEYCHAIN" >/dev/null 2>&1; then
   echo "Signing identity already set up: $IDENTITY"
+  import_release_cert
   exit 0
 fi
 
@@ -59,3 +74,4 @@ done < <(security list-keychains -d user)
 security list-keychains -d user -s "${existing[@]}" "$KEYCHAIN"
 
 echo "Created signing identity: $IDENTITY"
+import_release_cert

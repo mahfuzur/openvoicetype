@@ -1,5 +1,14 @@
 # Changelog
 
+## 0.1.1 (2026-09-24)
+
+- The Settings window opens at the right size (the first pane was clipped until you switched tabs).
+- **Reset…** for Accessibility, in Settings → General and in setup: when Voice to Text is switched on in the list but
+  pasting still doesn't work. The switch belonged to an older copy with a different signature, and turning it off and on
+  didn't help; the button removes the old entry and asks again.
+- Maintainers: `setup-signing.sh` imports the release certificate, so local builds are signed like releases and keep the
+  same permission grants.
+
 ## 0.1.0 (2026-09-24)
 
 First public version.

@@ -58,6 +58,11 @@ else
   PASS_FILE="$HOME/.config/voice-to-text/signing-keychain-password"
   if [[ -f "$KEYCHAIN" && -f "$PASS_FILE" ]]; then
     security unlock-keychain -p "$(cat "$PASS_FILE")" "$KEYCHAIN"
+    # A maintainer's keychain also holds the release certificate (setup-signing.sh): sign like a release, so a local
+    # build and a downloaded release are the same app to macOS and keep the same permission grants.
+    if security find-certificate -c "Voice to Text Release" "$KEYCHAIN" >/dev/null 2>&1; then
+      IDENTITY="Voice to Text Release"
+    fi
     SIGN_ARGS=(--sign "$IDENTITY" --keychain "$KEYCHAIN")
   else
     echo "warning: no stable signing identity (run scripts/setup-signing.sh); using ad-hoc signing" >&2

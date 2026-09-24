@@ -160,6 +160,7 @@ claude -p --model haiku --tools "" --strict-mcp-config --no-session-persistence 
   `app/Resources/AppIcon.icns`, `app/Resources/dmg-background.tiff` and `docs/images/app-icon.png`. Never use SF Symbols in
   the app icon (license); the menu-bar icon stays still and monochrome, with a red dot only while working.
 - `VoiceToText --settings-snapshots <dir>`: renders every Settings pane and the setup window to PNGs.
+  `--settings-window-test` opens the real Settings window, prints its content size and quits (the first pane must fit).
 - `shellcheck scripts/*.sh`: must pass.
 
 ## App architecture (current)
@@ -234,3 +235,8 @@ The menu-bar app (`app/Sources/VoiceToText/`) records in-process and runs `dicta
   (`~/Library/Keychains/voice-to-text-signing.keychain-db`, password in `~/.config/voice-to-text/signing-keychain-password`).
   `build-app.sh` uses it automatically, so the designated requirement is `identifier + certificate leaf`, which stays the same across rebuilds.
   Check it with `codesign -d -r- "/Applications/Voice to Text.app"`.
+  **Gotcha:** a grant made for one signature shows as "on" for a copy with another signature, but doesn't apply, and
+  toggling it doesn't help. `tccutil reset Accessibility io.github.mahfuzur.voicetotext` (no sudo) removes it; the app's
+  **Reset…** button (Settings → General, and setup) does that and asks again. A maintainer's `setup-signing.sh` imports the
+  release certificate (`~/.config/voice-to-text/release-cert/`), and `build-app.sh` then signs local builds as
+  "Voice to Text Release", so local builds and downloaded releases keep the same grants.

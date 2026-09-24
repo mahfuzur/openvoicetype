@@ -47,6 +47,9 @@ Add these GitHub Actions secrets (Settings → Secrets and variables → Actions
   SIGN_P12_PASSWORD  contents of $OUT/release.p12.password
   SIGN_IDENTITY      $IDENTITY
 
+Then run ./scripts/setup-signing.sh, so your local builds are signed the same way (switching between a local
+build and a downloaded release then keeps the Accessibility permission).
+
 With gh:  gh secret set SIGN_P12 <"$OUT/release.p12.base64"
           gh secret set SIGN_P12_PASSWORD <"$OUT/release.p12.password"
           gh secret set SIGN_IDENTITY --body "$IDENTITY"

@@ -208,7 +208,7 @@ Settings window, and they win over the config file.
 | Problem | Fix |
 |---|---|
 | "Voice to Text can't be opened" / "Apple could not verify" | Expected the first time: **System Settings → Privacy & Security → Open Anyway** (see Install). |
-| The pill says "Copied. Press ⌘V" | Accessibility isn't allowed. **Settings → General → Permissions**. If it's already switched on, remove Voice to Text from the list with − and add it again. |
+| The pill says "Copied. Press ⌘V", or Accessibility is switched on but Settings says it's needed | The switch belongs to an older copy with a different signature (turning it off and on doesn't help). **Settings → General → Permissions → Reset…**, then switch Voice to Text on in the list that opens. |
 | "No speech detected" every time | Microphone access is missing, or the wrong mic is selected. Try **Microphone ▸ Test Microphone…**. |
 | Bluetooth mic says "No audio from …" | Pick the built-in mic under **Microphone**, or reconnect the earbuds. |
 | "Pasted without cleanup" | Claude timed out or isn't signed in, and S1-mini isn't installed. **Settings → Cleanup** shows Claude's status and has a **Test Cleanup** button; download S1-mini there for offline cleanup. |

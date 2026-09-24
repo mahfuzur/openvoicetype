@@ -83,6 +83,16 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
                                 deviceUID: pinDefault ? AudioDevices.defaultInput()?.uid : settings.inputDeviceUID)
             return
         }
+        if CommandLine.arguments.contains("--settings-window-test") {
+            // For development: opens Settings, prints the window's content size once it has settled, and quits.
+            settingsWindow.show()
+            DispatchQueue.main.asyncAfter(deadline: .now() + 1.5) {
+                let size = self.settingsWindow.window?.contentLayoutRect.size ?? .zero
+                print("settings window \(Int(size.width))x\(Int(size.height))")
+                NSApp.terminate(nil)
+            }
+            return
+        }
         if CommandLine.arguments.contains("--overlay-demo") {
             runOverlayDemo()
             return
