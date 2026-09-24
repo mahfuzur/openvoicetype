@@ -128,6 +128,10 @@ struct GeneralPane: View {
             axAllowed = AXIsProcessTrusted()
         }
         .onAppear { devices = AudioDevices.inputDevices() }
+        // A reopened window doesn't get onAppear again; refresh when it comes to the front (a mic plugged in since).
+        .onReceive(NotificationCenter.default.publisher(for: NSWindow.didBecomeKeyNotification)) { _ in
+            devices = AudioDevices.inputDevices()
+        }
     }
 
     private func permissionRow(_ name: String, allowed: Bool, why: String, fix: @escaping () -> Void) -> some View {
@@ -220,7 +224,8 @@ struct CleanupPane: View {
                 Text("Only the transcript text is sent to Claude, never your audio.").font(.caption).foregroundColor(.secondary)
             }
             Section("S1-mini (offline)") {
-                ModelRow(model: ModelCatalog.s1Mini)
+                // Not deletable while it's the cleanup engine: every dictation would lose its cleanup.
+                ModelRow(model: ModelCatalog.s1Mini, allowDelete: !settings.usesS1)
                 Toggle("Use S1-mini when Claude is unavailable (offline, signed out, an error)", isOn: $settings.s1Fallback)
                     .disabled(!ModelCatalog.s1Mini.isInstalled || settings.cleanupEngine != "claude")
                 Text("S1-mini by Superwhisper. English only; it leaves Code mode (editors, terminals) as raw text.")

@@ -45,7 +45,7 @@ post-processing, rich paste, and the eval harness (`evals/`). Eval: 30% → **10
 | M2 | Formatting quality | 2 days | ✅ Done (2026-09-23) | Lists, paragraphs, spoken commands, app-aware style |
 | M2.5 | Offline cleanup with S1-mini | 1–2 days | ✅ Done (2026-09-24) | Works with no internet; a fully on-device option |
 | M3 | Native pipeline and speed | 3–4 days | ✅ Done (2026-09-24): about 2× faster; ≤ 3 s for short dictations | Around 2–3 s total, needed before a public release |
-| M4 | Settings window, first-run setup and DMG | 7–9 days | ◐ Built (2026-09-24); clean-install test pending ([plan](plans/M4-app-and-install.md)) | Anyone can install it from a DMG with no Homebrew or Terminal, and set it up in a real window |
+| M4 | Settings window, first-run setup and DMG | 7–9 days | ✅ Released as v0.1.0 (2026-09-24); a test on a second Mac is still to do ([plan](plans/M4-app-and-install.md)) | Anyone can install it from a DMG with no Homebrew or Terminal, and set it up in a real window |
 | M5 | Open-source release | 2–3 days | Partly done (license, CI, docs) | Name, terms check, demo, the first tagged DMG |
 | M6 | More providers | 3–4 days | Not started | Turns it into a platform: pick Codex, Gemini, Ollama or an API as well as Claude and S1-mini |
 
@@ -300,6 +300,6 @@ These are the two features, from comparing with Wispr Flow and Typeless, that ar
 
 M3 is done (see [plans/M3-speed.md](plans/M3-speed.md)): about twice as fast. Real dictations take 2.7 s (8 s of speech) to
 3.5–5.7 s (17–22 s of speech), from 6–9 s before; S1-mini takes about 1.5 s. What's left is Claude generating the text; the
-plan lists ideas for later. M4 is built ([plans/M4-app-and-install.md](plans/M4-app-and-install.md)): a self-contained app and DMG, first-run setup, a
-Settings window and a release workflow. Next: the clean-install test on a new Mac or VM (download, Open Anyway, setup, an update
-keeping permissions), then the release certificate secrets and the first tag (M5).
+plan lists ideas for later. M4 is done and **v0.1.0 is released** (2026-09-24): a self-contained app and DMG, first-run setup, a Settings window, the
+release workflow, and the artwork ([plans/M4-app-and-install.md](plans/M4-app-and-install.md)). Next: install the published DMG
+on a second Mac without Homebrew or Claude, then the rest of M5 (demo GIF, terms check) or M6 (more providers).

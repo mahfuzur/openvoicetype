@@ -47,7 +47,11 @@ final class ClaudeCLI: ObservableObject {
         runInTerminal(name: "install-claude-code", """
             echo "Installing Claude Code with Anthropic's official installer…"
             echo
-            curl -fsSL https://claude.ai/install.sh | bash || exit 1
+            installer="$(mktemp)"
+            # Downloaded first: piped straight into bash, a failed download would look like success.
+            curl -fsSL https://claude.ai/install.sh -o "$installer" ||
+              { echo "Couldn't download the installer. Check your internet connection and try again."; exit 1; }
+            bash "$installer" || exit 1
             echo
             echo "Now sign in with your Claude account (a browser window opens)…"
             "$HOME/.local/bin/claude" auth login --claudeai
@@ -96,22 +100,33 @@ final class ClaudeCLI: ObservableObject {
         return .ready(path: path, version: version, plan: json["subscriptionType"] as? String)
     }
 
-    /// The login shell's `PATH` finds npm, nvm and custom installs; then the usual places.
+    /// The user's own login shell finds custom installs; then the usual places, including npm, nvm, Volta and Bun.
+    /// (A login shell doesn't read .zshrc, where nvm usually sets itself up, hence the nvm folders.)
     private static func find() -> String? {
+        let userShell = getpwuid(getuid()).flatMap { String(validatingUTF8: $0.pointee.pw_shell) } ?? "/bin/zsh"
+        let shell = FileManager.default.isExecutableFile(atPath: userShell) ? userShell : "/bin/zsh"
         // The last line: a profile may print its own output first.
-        let shell = run("/bin/zsh", ["-lc", "command -v claude"], timeout: 5).output
+        let found = run(shell, ["-lc", "command -v claude"], timeout: 5).output
             .components(separatedBy: .newlines).last { $0.hasPrefix("/") } ?? ""
-        if FileManager.default.isExecutableFile(atPath: shell) { return shell }
+        if FileManager.default.isExecutableFile(atPath: found) { return found }
         let home = FileManager.default.homeDirectoryForCurrentUser.path
-        return ["\(home)/.local/bin/claude", "/opt/homebrew/bin/claude", "/usr/local/bin/claude", "\(home)/.claude/local/claude"]
-            .first { FileManager.default.isExecutableFile(atPath: $0) }
+        let nvm = ((try? FileManager.default.contentsOfDirectory(atPath: "\(home)/.nvm/versions/node")) ?? [])
+            .sorted(by: >).map { "\(home)/.nvm/versions/node/\($0)/bin/claude" }
+        let candidates = ["\(home)/.local/bin/claude", "/opt/homebrew/bin/claude", "/usr/local/bin/claude",
+                          "\(home)/.claude/local/claude", "\(home)/.npm-global/bin/claude", "\(home)/.volta/bin/claude",
+                          "\(home)/.bun/bin/claude"] + nvm
+        return candidates.first { FileManager.default.isExecutableFile(atPath: $0) }
     }
 
     /// Runs a command with a timeout, from a neutral directory, with the directory of `claude` on `PATH` (an npm
-    /// install is a node script and needs its `node` next to it).
+    /// install is a node script and needs its `node` next to it). Output goes to a file, not a pipe: a program a shell
+    /// profile starts in the background could keep a pipe open and block reading it forever.
     private static func run(_ executable: String, _ args: [String], timeout: TimeInterval = 10) -> (status: Int32, output: String) {
         let process = Process()
-        let output = Pipe()
+        let outputURL = FileManager.default.temporaryDirectory.appendingPathComponent("vtt-claude-\(UUID().uuidString)")
+        guard FileManager.default.createFile(atPath: outputURL.path, contents: nil),
+              let output = try? FileHandle(forWritingTo: outputURL) else { return (-1, "") }
+        defer { try? FileManager.default.removeItem(at: outputURL) }
         process.executableURL = URL(fileURLWithPath: executable)
         process.arguments = args
         process.currentDirectoryURL = URL(fileURLWithPath: "/tmp")
@@ -122,12 +137,17 @@ final class ClaudeCLI: ObservableObject {
         process.standardOutput = output
         process.standardError = FileHandle.nullDevice
         process.standardInput = FileHandle.nullDevice
+        let exited = DispatchSemaphore(value: 0)
+        process.terminationHandler = { _ in exited.signal() }
         do { try process.run() } catch { return (-1, "") }
-        let timer = DispatchWorkItem { if process.isRunning { process.terminate() } }
-        DispatchQueue.global().asyncAfter(deadline: .now() + timeout, execute: timer)
-        let data = output.fileHandleForReading.readDataToEndOfFile()
-        process.waitUntilExit()
-        timer.cancel()
+        if exited.wait(timeout: .now() + timeout) == .timedOut {
+            process.terminate()
+            if exited.wait(timeout: .now() + 1) == .timedOut { kill(process.processIdentifier, SIGKILL) }
+            try? output.close()
+            return (-1, "")
+        }
+        try? output.close()
+        let data = (try? Data(contentsOf: outputURL)) ?? Data()
         return (process.terminationStatus, String(decoding: data, as: UTF8.self))
     }
 

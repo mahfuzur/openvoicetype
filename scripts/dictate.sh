@@ -490,7 +490,10 @@ srv_signature() {
     s1-server) model="$S1_MODEL" ;;
     whisper-server) model="$WHISPER_MODEL" ;;
   esac
-  printf '%s %s' "$(command -v "$(srv_binary "$1")")" "$model"
+  local binary
+  binary="$(command -v "$(srv_binary "$1")" || true)"
+  # Its size and date too: an updated app replaces the helpers at the same path.
+  printf '%s %s %s' "$binary" "$( [[ -n "$binary" ]] && stat -f '%z-%m' "$binary")" "$model"
 }
 
 srv_launch() {

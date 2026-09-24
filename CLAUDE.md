@@ -119,14 +119,21 @@ claude -p --model haiku --tools "" --strict-mcp-config --no-session-persistence 
   (`GGML_METAL_EMBED_LIBRARY`, so the Metal compiler from Xcode isn't needed), no OpenSSL/curl, `GGML_CCACHE=OFF` (a broken
   Homebrew ccache aborts the build), deployment target 13.3 (Accelerate's new BLAS). It fails if a helper links anything
   outside `/usr/lib` and `/System`. `build-app.sh` copies them to `Contents/Helpers` and signs them before the app.
-- The app sets `VTT_BIN_DIR` (the helpers, first on `PATH` in `dictate.sh`), `VTT_WHISPER_MODEL` and `VTT_CLAUDE_BIN` (found
+- **Gotcha (downloads):** a downloaded DMG quarantines every file in it. Open Anyway approves the app, not the helpers
+  it launches: a quarantined helper hangs in Gatekeeper's check, so transcription would never start. The app can't clear the
+  flag inside its own bundle (App Management protects signed apps: `xattr -d` gets "Operation not permitted"), so
+  `BundledHelpers` writes byte copies to `~/Library/Application Support/Voice to Text/Helpers` at launch (only when they
+  changed; the copies keep their signature and aren't quarantined) and runs them from there. Test it by setting
+  `com.apple.quarantine` on a copy of the DMG. Commands run in Claude Code's sandbox mark every file they write as
+  quarantined, so run such tests outside the sandbox.
+- The app sets `VTT_BIN_DIR` (the helper copies, first on `PATH` in `dictate.sh`), `VTT_WHISPER_MODEL` and `VTT_CLAUDE_BIN` (found
   through the login shell by `ClaudeCLI`, so npm/nvm installs work; its directory is added to `PATH` for `node`).
 - **Gotcha:** the bundled servers compile their Metal shaders on first launch: 10 s (Whisper) to 19 s (llama) once, then
   0.3–0.6 s. macOS caches it per binary and location, so every re-signed or moved build pays it again (e.g. launched
   from the DMG, then moved to Applications). The app warms both servers after a model
   download and whenever the helpers change (`warmedHelpers`), and `srv_start` waits up to 30 s.
-- `srv_start` restarts a running server whose binary or model differs from the wanted one (`<name>.signature` state
-  file): a model change, or an updated or moved app whose old servers would keep running from the old copy.
+- `srv_start` restarts a running server whose binary (path, size and date) or model differs from the wanted one
+  (`<name>.signature` state file): a model change, or an updated app whose old servers would keep running the old binary.
 - `transcribe_wav` reads the length from the WAV header (`wav_seconds`, Perl). Without it `soxi` was required, and a Mac without
   `sox` skipped every dictation as too short.
 - First-run setup (`SetupWindow.swift`) opens when no Whisper model is installed or the app runs from the DMG/Downloads.
@@ -198,8 +205,12 @@ The menu-bar app (`app/Sources/VoiceToText/`) records in-process and runs `dicta
 - `SettingsWindow.swift`: `NSTabViewController` (toolbar style) with SwiftUI panes: General, Speech, Cleanup, Dictionary,
   Modes, About. `SettingsComponents.swift`: model rows, Claude status, the hotkey recorder. `SetupWindow.swift`: first-run setup.
 - `ModelManager.swift`: the model catalog (pinned Hugging Face URLs, sizes, SHA-256) and downloads with progress, resume and a
-  checksum check. `ClaudeCLI.swift`: find, version, `auth status`, install/sign in. `Updater.swift`: daily GitHub release check.
+  checksum check. A resumed download finishes with HTTP 206, so any 2xx counts as success. `BundledHelpers.swift`: the
+  helper copies described above. `ClaudeCLI.swift`: find, version, `auth status`, install/sign in. `Updater.swift`: daily GitHub release check.
   `DictionaryFile.swift`: reads and writes `dictionary.txt`.
+  The hotkey recorder (`HotKeyCapture`) stops on any window's close or resign-key: SwiftUI's onDisappear doesn't fire when
+  an AppKit window closes, and a stuck recorder left the dictation hotkey unregistered. Hotkeys need ⌃ or ⌥ (or a function
+  key): a global ⌘ shortcut like ⌘V would break other apps and catch the app's own paste.
 - `Modes.swift`: `DictationMode` and the bundle-ID → mode mapping. `DictationContext.current()` reads the frontmost app
   when recording stops. `RichText.swift` converts list lines to HTML for rich paste (not in code mode).
   `AppLog` writes `APP RESULT …` lines to `dictate.log`.

@@ -40,8 +40,6 @@ final class Dictation {
 
     private let scriptURL: URL
     private let settings = AppSettings.shared
-    /// The app's own whisper-server, whisper-cli and llama-server (M4), if this build bundles them.
-    private let helpersURL = Bundle.main.bundleURL.appendingPathComponent("Contents/Helpers")
     private let recorder = Recorder()
     private var maxDurationTimer: Timer?
     private let maxDuration: TimeInterval = 300
@@ -264,7 +262,7 @@ final class Dictation {
         env["VTT_CLAUDE_MODEL"] = settings.claudeModel
         env["VTT_CLEANUP"] = settings.cleanupEngine
         env["VTT_S1_FALLBACK"] = settings.s1Fallback ? "on" : "off"
-        if FileManager.default.fileExists(atPath: helpersURL.path) { env["VTT_BIN_DIR"] = helpersURL.path }
+        if let helpers = BundledHelpers.directory { env["VTT_BIN_DIR"] = helpers.path }
         if let model = ModelCatalog.whisperModel(named: settings.whisperModel), model.isInstalled {
             env["VTT_WHISPER_MODEL"] = model.path.path
         }
