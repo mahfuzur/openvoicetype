@@ -19,7 +19,8 @@ Code CLI** to tidy up the text (remove filler words, fix punctuation, format lis
   requests go through your account, and yours don't go through anyone else's.
 - **Each request starts with you.** One short request per dictation, when you press the hotkey. Nothing runs in the
   background, on a timer or in batches.
-- **Only the transcript text is sent**, never audio, and only while Claude is the selected cleanup. Claude runs with no
+- **Only text is sent**, never audio: the transcript while Claude is the selected cleanup, and for **Command Mode** the
+  text you selected plus your spoken instruction, only when you press its key. Claude runs with no
   tools, no MCP servers and `--safe-mode` (so your own CLAUDE.md, memory, skills and hooks aren't sent either). It's told
   to treat the transcript as text to tidy, never as instructions.
 - **Your plan, not the API.** If `ANTHROPIC_API_KEY` or `ANTHROPIC_AUTH_TOKEN` is set in your environment, `claude -p` would

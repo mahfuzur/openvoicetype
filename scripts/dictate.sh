@@ -12,6 +12,8 @@
 #   refine      clean up the transcript on stdin and print it; exit 3 = fell back to raw,
 #               exit 4 = the online engine was unavailable and S1-mini cleaned it up,
 #               exit 5 = the meaning guard pasted Whisper's text; details in $VTT_RESULT_FILE (JSON)  [used by the app]
+#   command     Command Mode: do the spoken instruction on stdin with the text in $VTT_COMMAND_FILE (JSON) and print
+#               the new text; exit 3 = nothing to paste (the reason is in $VTT_RESULT_FILE)       [used by the app]
 #   s1-server       start [--keep] | release | stop | status: the local S1-mini server (llama-server)
 #   whisper-server  start [--keep] | release | stop | status: Whisper with the model kept loaded
 
@@ -70,6 +72,10 @@ if [[ -n "${VTT_OPENAI_KEY_FILE:-}" && -f "$VTT_OPENAI_KEY_FILE" ]]; then
   OPENAI_API_KEY="$(tr -d '\r\n' <"$VTT_OPENAI_KEY_FILE")"
   rm -f "$VTT_OPENAI_KEY_FILE"
 fi
+# Command Mode (edit selected text by voice): claude, or openai (the endpoint above). S1-mini can't follow instructions.
+COMMAND_ENGINE="${VTT_COMMAND_ENGINE:-${COMMAND_ENGINE:-claude}}"
+COMMAND_TIMEOUT="${COMMAND_TIMEOUT:-30}" # a long selection takes longer to rewrite than a dictation to clean up
+COMMAND_FILE="${VTT_COMMAND_FILE:-}"     # the app's JSON: target, original, current, turns
 # Use S1-mini when the online engine is unavailable: offline, not logged in, rate limited, an error or a timeout.
 S1_FALLBACK="${VTT_S1_FALLBACK:-${S1_FALLBACK:-on}}"
 # After an AI cleanup, paste Whisper's text instead if a number or a negation ("not", "never"...) went missing.
@@ -122,6 +128,10 @@ ERR_FILE="$LOG_DIR/error.log"
 
 mkdir -p "$STATE_DIR" "$LOG_DIR"
 
+# What this run does: cleanup (refine, dictation) or command (Command Mode), and the online engine it uses.
+JOB=cleanup
+ONLINE_ENGINE="$CLEANUP"
+
 # The pre-started Claude process (see claude_prestart). Reset here so nothing is inherited from the environment:
 # Claude Code itself exports CLAUDE_PID, and killing an inherited pid would end the user's own session.
 PRESTART_PID="" PRESTART_DIR="" PRESTART_OFFLINE=""
@@ -146,8 +156,8 @@ log_maintain() {
   done
   if [[ "$LOG_TEXT" != on ]]; then
     for file in "$LOG_FILE" "$LOG_FILE.1"; do
-      if [[ -f "$file" ]] && grep -Eq '^[0-9-]+ [0-9:]+   (raw|cleaned): ' "$file"; then
-        perl -i -ne 'print unless /^[0-9-]+ [0-9:]+   (?:raw|cleaned): /' "$file" 2>/dev/null || true
+      if [[ -f "$file" ]] && grep -Eq '^[0-9-]+ [0-9:]+   (raw|cleaned|instruction): ' "$file"; then
+        perl -i -ne 'print unless /^[0-9-]+ [0-9:]+   (?:raw|cleaned|instruction): /' "$file" 2>/dev/null || true
       fi
     done
   fi
@@ -319,7 +329,9 @@ whisper_prompt() {
 
 system_prompt() {
   local prompt
-  if [[ -f "$PROMPT_FILE" ]]; then
+  if [[ "$JOB" == command ]]; then
+    prompt="$(cat "$PROMPTS_DIR/command.md")"
+  elif [[ -f "$PROMPT_FILE" ]]; then
     prompt="$(cat "$PROMPT_FILE")"
   elif [[ -f "$PROMPTS_DIR/system.md" ]]; then
     prompt="$(cat "$PROMPTS_DIR/system.md")"
@@ -334,6 +346,7 @@ system_prompt() {
 
 user_message() {
   local raw="$1" vocab
+  [[ "$JOB" == command ]] && { command_message "$raw"; return; }
   vocab="$(vocabulary)"
   printf '<context app="%s" mode="%s"/>\n' "${APP_NAME//\"/}" "$MODE"
   [[ -n "$vocab" ]] && printf '<vocabulary>%s</vocabulary>\n' "$vocab"
@@ -342,25 +355,36 @@ user_message() {
 
 # Dictionary replacements (whole words, case-insensitive), then an output filter: strips tags, code fences,
 # wrapping quotes and "Here is..." preambles the model sometimes adds, and normalizes blank lines.
+# For Command Mode (JOB=command), the result is text the user asked for: only the dictionary and whitespace are touched,
+# a preamble, code fences or wrapping quotes are stripped only if the text given to the model didn't have them
+# (COMMAND_SOURCE), and the tags command_message neutralized are put back.
 post_process() {
-  REPL="$REPLACEMENTS" MODE="$MODE" perl -CSD -0777 -pe '
+  local command="" source=""
+  [[ "$JOB" == command ]] && command=1 source="$(command_source)"
+  REPL="$REPLACEMENTS" MODE="$MODE" NO_REFLOW="$command" COMMAND_SOURCE="$source" perl -CSD -0777 -pe '
     BEGIN {
       my $repl = $ENV{REPL} // ""; utf8::decode($repl);
       @pairs = map { [split /\t/, $_, 2] } grep { /\t/ } split /\n/, $repl;
+      $command = $ENV{NO_REFLOW};
+      $source = $ENV{COMMAND_SOURCE} // ""; utf8::decode($source);
     }
     for my $p (@pairs) { my ($from, $to) = @$p; s/(?<![\w@.])\Q$from\E(?![\w@])/$to/gi; }
-    s#</?(?:transcript|context|vocabulary)[^>]*>##g;
-    s/([\w.+-]+@[\w-]+(?:\.[\w-]+)+)/\L$1/g;
-    s/\b(\d{1,2}(?::\d{2})?) ?([ap])m\b/$1 \U$2M/gi;
-    s/\A\s*(?:Here(?: is|\x{2019}s|\x27s) [^\n]*:\s*\n)//i;
-    s/\A\s*```[a-z]*\n(.*?)\n```\s*\z/$1/s;
-    s/\A\s*["\x{201C}](.*)["\x{201D}]\s*\z/$1/s unless /\n/;
+    if ($command) {
+      s#&lt;(/?)(original|current_text|instruction|previous_instruction|context|vocabulary)(?=[\s>/])#<$1$2#gi;
+    } else {
+      s#</?(?:transcript|context|vocabulary)[^>]*>##g;
+      s/([\w.+-]+@[\w-]+(?:\.[\w-]+)+)/\L$1/g;
+      s/\b(\d{1,2}(?::\d{2})?) ?([ap])m\b/$1 \U$2M/gi;
+    }
+    s/\A\s*(?:Here(?: is|\x{2019}s|\x27s) [^\n]*:\s*\n)//i unless $source =~ /\A\s*Here(?: is|\x{2019}s|\x27s) /i;
+    s/\A\s*```[a-z]*\n(.*?)\n```\s*\z/$1/s unless $source =~ /\A\s*```/;
+    s/\A\s*["\x{201C}](.*)["\x{201D}]\s*\z/$1/s unless /\n/ || $source =~ /\A\s*["\x{201C}].*["\x{201D}]\s*\z/s;
     s/[ \t]+$//mg;
     s/\n{3,}/\n\n/g;
     s/\A\s+|\s+\z//g;
     # Paragraph guard: the model sometimes returns a wall of text. Split any prose paragraph with more
     # than 4 sentences, preferring breaks before discourse markers, with at most 4 sentences per chunk.
-    if (($ENV{MODE} // "") ne "chat") {
+    if (($ENV{MODE} // "") ne "chat" && !$ENV{NO_REFLOW}) {
       my @blocks = split /\n\n/;
       for my $block (@blocks) {
         next if $block =~ /^\s*(?:[-*\x{2022}]|\d+[.)])\s/m;
@@ -379,7 +403,7 @@ post_process() {
       $_ = join("\n\n", @blocks);
     }
     # Chat style: a one-line, one-sentence message has no trailing period (but keeps "..." and ?/!).
-    if (($ENV{MODE} // "") eq "chat" && !/\n/ && !/[.!?]\s+\S/) { s/(?<!\.)\.\z//; }
+    if (($ENV{MODE} // "") eq "chat" && !$ENV{NO_REFLOW} && !/\n/ && !/[.!?]\s+\S/) { s/(?<!\.)\.\z//; }
   '
 }
 
@@ -553,11 +577,13 @@ refine() {
 # about 1 s instead of 3.5-4 s. Each process serves exactly one dictation, so no earlier transcript stays in its context.
 
 claude_prestart() {
-  [[ "$CLAUDE_PRESTART" == on && "$REFINE" == on && "$MODE" != raw && "$CLEANUP" == claude ]] || return 0
+  [[ "$CLAUDE_PRESTART" == on && "$ONLINE_ENGINE" == claude ]] || return 0
+  [[ "$JOB" == command ]] || [[ "$REFINE" == on && "$MODE" != raw ]] || return 0
   command -v "$CLAUDE_BIN" >/dev/null || return 0
   if is_offline; then
-    log "OFFLINE at start, warming S1-mini"
-    if [[ "$S1_FALLBACK" == on && "$MODE" != code ]] && srv_installed s1-server; then
+    if [[ "$JOB" == command ]]; then log "OFFLINE at start, Command Mode can't run"; else log "OFFLINE at start, warming S1-mini"; fi
+    # Command Mode has no offline fallback; a dictation's cleanup falls back to S1-mini, so it starts loading now.
+    if [[ "$JOB" == cleanup && "$S1_FALLBACK" == on && "$MODE" != code ]] && srv_installed s1-server; then
       { srv_start s1-server; } </dev/null >/dev/null 2>&1 &
     fi
     PRESTART_OFFLINE=on
@@ -1058,18 +1084,18 @@ try_online() {
   local t0 out offline="" detail
   REFINE_STATUS="failed-fallback-raw"
   rm -f "$ENGINE_ERR_FILE"
-  if [[ "$CLEANUP" == openai ]]; then
+  if [[ "$ONLINE_ENGINE" == openai ]]; then
     if ! openai_is_local && is_offline "$OA_HOST" "$OA_PORT"; then offline=1; fi
   elif [[ -n "${PRESTART_OFFLINE:-}" ]] || { [[ -z "${PRESTART_PID:-}" ]] && is_offline; }; then
     offline=1 # a pre-started process means the online check already passed when recording started
   fi
   if [[ -n "$offline" ]]; then
-    log "OFFLINE skipping $CLEANUP"
+    log "OFFLINE skipping $ONLINE_ENGINE"
     ENGINE_ERROR=offline
     return 0
   fi
   t0="$(now_ms)"
-  if [[ "$CLEANUP" == openai ]]; then
+  if [[ "$ONLINE_ENGINE" == openai ]]; then
     out="$(refine_openai "$RAW_TEXT")" && RESULT="$out" REFINE_STATUS=ok ENGINE=openai
     OPENAI_MS=$(($(now_ms) - t0))
   else
@@ -1081,7 +1107,7 @@ try_online() {
     IFS=$'\037' read -r ENGINE_ERROR ENGINE_RESETS detail <"$ENGINE_ERR_FILE" || true
   fi
   ENGINE_ERROR="${ENGINE_ERROR:-error}"
-  if [[ "$CLEANUP" == claude && "$ENGINE_ERROR" == auth ]] &&
+  if [[ "$ONLINE_ENGINE" == claude && "$ENGINE_ERROR" == auth ]] &&
     claude_plain auth status --json 2>/dev/null | grep -Eq '"loggedIn": *true'; then
     # The --bare canary: Anthropic plans to make bare mode (no subscription login) the default for -p.
     ENGINE_ERROR=auth-mismatch
@@ -1089,7 +1115,7 @@ try_online() {
       "print mode signs in (see https://code.claude.com/docs/en/headless)"
   fi
   ENGINE_RESETS="$(format_resets "${ENGINE_RESETS:-}")"
-  log "WARN $CLEANUP failed: $ENGINE_ERROR${ENGINE_RESETS:+ (resets $ENGINE_RESETS)}${detail:+: $detail}"
+  log "WARN $ONLINE_ENGINE failed: $ENGINE_ERROR${ENGINE_RESETS:+ (resets $ENGINE_RESETS)}${detail:+: $detail}"
 }
 
 # Cleans up RAW_TEXT. Sets RESULT, REFINE_STATUS, ENGINE, the stage times, ENGINE_ERROR, ENGINE_RESETS, GUARD_REASON and
@@ -1127,7 +1153,7 @@ log_safe() { if [[ "$LOG_TEXT" == on ]]; then printf '%s' "$1"; else printf '%s'
 # The cleanup part of a log line: stage times, the outcome, and why the online engine failed.
 cleanup_timings() {
   local line="claude=${CLAUDE_MS}ms s1=${S1_MS}ms"
-  [[ "$CLEANUP" == openai ]] && line+=" openai=${OPENAI_MS}ms"
+  [[ "$ONLINE_ENGINE" == openai ]] && line+=" openai=${OPENAI_MS}ms"
   line+=" refine=$REFINE_STATUS"
   [[ -n "$ENGINE_ERROR" ]] && line+=" error=$ENGINE_ERROR"
   printf '%s' "$line"
@@ -1231,6 +1257,77 @@ cmd_refine() {
   esac
 }
 
+# --- Command Mode ---
+# The user message for a command: the context (with the target: selection, last_dictation, write or copy), vocabulary,
+# the text before the first edit (<original>), for a follow-up the earlier instructions and the latest result, and the
+# spoken instruction. The text comes from the app's VTT_COMMAND_FILE (JSON). Tags inside the data are neutralized, so a
+# selection can't close its own block.
+command_message() {
+  CMD_FILE="$COMMAND_FILE" CMD_INSTRUCTION="$1" CMD_APP="${APP_NAME//\"/}" CMD_MODE="$MODE" CMD_VOCAB="$(vocabulary)" \
+    perl -MJSON::PP -e '
+      my $env = sub { my $value = $ENV{$_[0]} // ""; utf8::decode($value); $value };
+      my $job = {};
+      if (length $ENV{CMD_FILE} && open my $file, "<", $ENV{CMD_FILE}) {
+        local $/;
+        my $json = <$file>;
+        $job = eval { JSON::PP->new->utf8->decode($json) } || {};
+      }
+      my $safe = sub {
+        my $text = shift // "";
+        $text =~ s#<(/?)(original|current_text|instruction|previous_instruction|context|vocabulary)(?=[\s>/])#&lt;$1$2#gi;
+        return $text;
+      };
+      my @turns = ref $job->{turns} eq "ARRAY" ? @{ $job->{turns} } : ();
+      binmode STDOUT, ":encoding(UTF-8)";
+      printf qq(<context app="%s" mode="%s" target="%s"/>\n), $env->("CMD_APP"), $env->("CMD_MODE"), $job->{target} // "write";
+      my $vocabulary = $env->("CMD_VOCAB");
+      print "<vocabulary>$vocabulary</vocabulary>\n" if length $vocabulary;
+      print "<original>\n", $safe->($job->{original}), "\n</original>\n" if length($job->{original} // "");
+      print "<previous_instruction>", $safe->(ref $_ eq "HASH" ? $_->{instruction} : $_), "</previous_instruction>\n" for @turns;
+      print "<current_text>\n", $safe->($job->{current}), "\n</current_text>\n" if @turns && length($job->{current} // "");
+      print "<instruction>", $safe->($env->("CMD_INSTRUCTION")), "</instruction>\n";'
+}
+
+# The text a command works on (the latest result for a follow-up, else the original), for post_process.
+command_source() {
+  [[ -n "$COMMAND_FILE" && -f "$COMMAND_FILE" ]] || return 0
+  perl -MJSON::PP -0777 -ne '
+    my $job = eval { JSON::PP->new->utf8->decode($_) } || {};
+    my $text = ref $job->{turns} eq "ARRAY" && @{ $job->{turns} } && length($job->{current} // "") ? $job->{current}
+      : $job->{original} // "";
+    binmode STDOUT, ":encoding(UTF-8)";
+    print $text;' "$COMMAND_FILE" 2>/dev/null || true
+}
+
+# App stage for Command Mode: do the instruction on stdin with the text in VTT_COMMAND_FILE, and print the new text.
+# Exit 3: nothing to paste (offline, a limit, not signed in, a failure: the reason is in VTT_RESULT_FILE). No S1-mini
+# fallback and no meaning guard: an edit is meant to change the text.
+cmd_command() {
+  JOB=command ONLINE_ENGINE="$COMMAND_ENGINE" CLAUDE_TIMEOUT="$COMMAND_TIMEOUT" OPENAI_TIMEOUT="$COMMAND_TIMEOUT"
+  [[ "$ONLINE_ENGINE" == openai ]] || ONLINE_ENGINE=claude
+  trap claude_cleanup EXIT
+  claude_prestart
+  RAW_TEXT="$(cat)"
+  [[ -n "$(trim "$RAW_TEXT")" ]] || return 0
+  RESULT="" REFINE_STATUS=failed ENGINE=none CLAUDE_MS=0 OPENAI_MS=0 S1_MS=0
+  ENGINE_ERROR="" ENGINE_RESETS="" GUARD_REASON="" REJECTED=""
+  try_online
+  if [[ "$REFINE_STATUS" == ok ]]; then
+    RESULT="$(printf '%s' "$RESULT" | post_process)"
+    [[ -n "$(trim "$RESULT")" ]] || { REFINE_STATUS=failed ENGINE_ERROR=error; }
+  else
+    RESULT="" REFINE_STATUS=failed
+  fi
+  local target
+  target="$(perl -MJSON::PP -0777 -ne 'print eval { JSON::PP->new->utf8->decode($_)->{target} } // "write"' \
+    "${COMMAND_FILE:-/dev/null}" 2>/dev/null)" || target="write"
+  log "COMMAND target=${target:-write} $(cleanup_timings) mode=$MODE${APP_NAME:+ app=\"$APP_NAME\"}"
+  [[ "$LOG_TEXT" == on ]] && log "  instruction: $RAW_TEXT"
+  write_result
+  printf '%s' "$RESULT"
+  [[ "$REFINE_STATUS" == ok ]] || exit 3
+}
+
 selftest() {
   local wav="$STATE_DIR/selftest.wav"
   say --data-format=LEI16@16000 -o "$wav" \
@@ -1252,8 +1349,9 @@ main() {
     selftest) selftest ;;
     transcribe) cmd_transcribe "${2:?usage: dictate.sh transcribe <wav>}" ;;
     refine) cmd_refine ;;
+    command) cmd_command ;;
     s1-server | whisper-server) cmd_server "$cmd" "${@:2}" ;;
-    -h | --help | help) sed -n '2,16p' "$0" | sed 's/^# \{0,1\}//' ;;
+    -h | --help | help) sed -n '2,18p' "$0" | sed 's/^# \{0,1\}//' ;;
     *) echo "Unknown command: $cmd" >&2; exit 2 ;;
   esac
 }

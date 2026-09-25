@@ -16,9 +16,9 @@ final class SettingsWindowController: NSWindowController {
         super.init(window: window)
         tabs.tabStyle = .toolbar
         let panes: [(String, String, AnyView, CGFloat)] = [
-            ("General", "gearshape", AnyView(GeneralPane(actions: actions)), 690),
+            ("General", "gearshape", AnyView(GeneralPane(actions: actions)), 720),
             ("Speech", "waveform", AnyView(SpeechPane()), 400),
-            ("Cleanup", "sparkles", AnyView(CleanupPane(actions: actions)), 620),
+            ("Cleanup", "sparkles", AnyView(CleanupPane(actions: actions)), 660),
             ("Dictionary", "character.book.closed", AnyView(DictionaryPane()), 540),
             ("Modes", "rectangle.3.group", AnyView(ModesPane()), 500),
             ("About", "info.circle", AnyView(AboutPane(actions: actions)), 600),
@@ -92,8 +92,11 @@ struct GeneralPane: View {
                     Text("Press to start, press again to stop").tag(false)
                     Text("Hold while you speak (hold to talk)").tag(true)
                 }
+                LabeledContent("Command Mode") { HotKeyRecorder(slot: .command) }
                 LabeledContent("Swap last paste") { HotKeyRecorder(slot: .swap) }
-                Text("Esc cancels a recording. Swap last paste replaces what was just pasted with Whisper's own text, or back.")
+                Text("Esc cancels a recording. Command Mode: select text, press it and say how to change it "
+                    + "(\u{201C}make this shorter\u{201D}); with nothing selected it writes at the cursor. "
+                    + "Swap last paste replaces what was just pasted with Whisper's own text, or back.")
                     .font(.caption).foregroundColor(.secondary)
             }
             Section("Microphone") {
@@ -243,8 +246,19 @@ struct CleanupPane: View {
                     + "If a cleanup drops a number or a \u{201C}not\u{201D}, Whisper's text is pasted instead.")
                     .font(.caption).foregroundColor(.secondary)
             }
-            if settings.cleanupEngine == "openai" {
+            if settings.cleanupEngine == "openai" || settings.commandEngine == "openai" {
                 APIEndpointSection()
+            }
+            Section {
+                Picker("Command Mode uses", selection: $settings.commandEngine) {
+                    Text("Claude").tag("claude")
+                    Text("The API").tag("openai")
+                }
+                .pickerStyle(.segmented)
+            } footer: {
+                Text("Command Mode (\(settings.commandHotKey.label)) edits the selected text by voice, so it needs a model that "
+                    + "follows instructions: Claude, or a capable API model. The selection and your instruction are sent to it.")
+                    .font(.caption).foregroundColor(.secondary)
             }
             Section("Claude") {
                 ClaudeStatusView()

@@ -10,6 +10,8 @@ final class OverlayModel: ObservableObject {
         case recording
         case transcribing
         case polishing(offline: Bool)
+        /// Command Mode while Claude works: "Editing" or "Writing".
+        case editing(String)
         case success(String)
         case message(String, isError: Bool)
     }
@@ -20,6 +22,8 @@ final class OverlayModel: ObservableObject {
     @Published var levels: [CGFloat] = Array(repeating: 0, count: barCount)
     @Published var recordingStartedAt = Date()
     @Published var shakes: CGFloat = 0
+    /// Command Mode: what the command will act on, next to the waveform ("12 words selected"). Nil for dictation.
+    @Published var chip: String?
 
     func push(level: Float) {
         levels.removeFirst()
@@ -60,10 +64,16 @@ final class OverlayController {
         panel.contentView = NSHostingView(rootView: OverlayView(model: model))
     }
 
-    func showRecording() {
+    func showRecording(chip: String? = nil) {
         model.resetLevels()
         model.recordingStartedAt = Date()
+        model.chip = chip
         show(.recording)
+    }
+
+    /// Command Mode: the target is known a moment after the key press (reading the selection).
+    func setChip(_ chip: String?) {
+        model.chip = chip
     }
 
     func showMicTest(deviceName: String) {
@@ -164,6 +174,14 @@ struct OverlayView: View {
             PulsingDot()
             Waveform(levels: model.levels)
             ElapsedTime(since: model.recordingStartedAt)
+            if let chip = model.chip {
+                Text(chip)
+                    .font(.system(size: 12, weight: .semibold))
+                    .lineLimit(1)
+                    .padding(.horizontal, 8)
+                    .padding(.vertical, 3)
+                    .background(Capsule().fill(Color(red: 0.75, green: 0.6, blue: 1.0).opacity(0.28)))
+            }
         case .transcribing:
             ProcessingBars(color: Color(red: 1.0, green: 0.62, blue: 0.2))
             ShimmerText(text: "Transcribing")
@@ -171,6 +189,10 @@ struct OverlayView: View {
             Image(systemName: "sparkles")
                 .foregroundColor(Color(red: 0.75, green: 0.6, blue: 1.0))
             ShimmerText(text: offline ? "Polishing offline" : "Polishing")
+        case .editing(let label):
+            Image(systemName: "wand.and.stars")
+                .foregroundColor(Color(red: 0.75, green: 0.6, blue: 1.0))
+            ShimmerText(text: label)
         case .success(let text):
             Image(systemName: "checkmark.circle.fill")
                 .foregroundColor(.green)

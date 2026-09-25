@@ -58,6 +58,47 @@ enum LogicSelfTest {
                               wasPasted: false, showingRaw: true))
         }
         check("history keeps 10", history.entries.count == 10)
+
+        // Command Mode: the line-copy guard and the planner's decisions.
+        check("line-copy guard", SelectionReader.looksLikeLineCopy("foo()\n", bundleID: "com.microsoft.VSCode")
+            && !SelectionReader.looksLikeLineCopy("foo\nbar\n", bundleID: "com.microsoft.VSCode")
+            && !SelectionReader.looksLikeLineCopy("foo()\n", bundleID: "com.apple.TextEdit"))
+        func decide(_ text: String?, editable: Bool = true, knowsFocus: Bool = true, session: CommandSession? = nil)
+            -> CommandPlanner.Decision {
+            CommandPlanner.decide(selection: Selection(text: text, source: .ax, editable: editable, knowsFocus: knowsFocus),
+                                  target: target, session: session, lastDictation: nil, reselect: { _ in nil })
+        }
+        func planned(_ decision: CommandPlanner.Decision) -> CommandPlan? {
+            if case .plan(let plan) = decision { return plan }
+            return nil
+        }
+        check("command: edit a selection", planned(decide("hello world"))?.target == .selection
+            && planned(decide("hello world"))?.chip == "2 words selected")
+        check("command: read-only text is copy only", planned(decide("hello world", editable: false))?.target == .copy)
+        if case .refuse = decide(String(repeating: "x", count: CommandPlanner.maxCharacters + 1)) {
+            check("command: too long is refused", true)
+        } else {
+            check("command: too long is refused", false)
+        }
+        var unreadable = Selection(text: nil, source: .copy, editable: true, knowsFocus: false)
+        unreadable.inconclusive = true
+        if case .plan(let plan) = CommandPlanner.decide(selection: unreadable, target: target, session: nil, lastDictation: nil,
+                                                        reselect: { _ in nil }) {
+            check("command: an unreadable selection is copy only", plan.target == .copy)
+        } else {
+            check("command: an unreadable selection is copy only", false)
+        }
+        check("command: no selection writes", planned(decide(nil, knowsFocus: false))?.target == .write
+            && planned(decide(nil, editable: false))?.target == .copy)
+        let session = CommandSession(target: target, original: "hey can u send it", startedAs: .selection)
+        session.instructions = ["make it formal"]
+        session.current = "Could you please send it?"
+        let followUp = planned(decide("Could you  please send it?", session: session))
+        let payload = followUp?.payload
+        check("command: a follow-up continues the session", followUp?.isFollowUp == true && followUp?.session === session
+            && payload?["original"] as? String == "hey can u send it"
+            && payload?["current"] as? String == "Could you please send it?"
+            && (payload?["turns"] as? [[String: String]])?.first?["instruction"] == "make it formal")
         return lines
     }
 }

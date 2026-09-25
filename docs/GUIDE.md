@@ -11,6 +11,7 @@ configuration, how it works, and troubleshooting.
 | Stop and paste | **⌃⌥Space** again |
 | Hold to talk instead | **Settings → General → When you press it**: hold ⌃⌥Space while you speak, release to paste |
 | Cancel | **Esc** while recording |
+| Command Mode | **⌃⌥⇧Space**: select text, press it, say how to change it (see [Command Mode](#command-mode)) |
 | Swap the last paste | **⌃⌥Z**: undoes the paste and puts Whisper's own text there instead, or back to the cleaned text |
 | Copy an earlier dictation | Menu → **Recent Dictations** (the last 10, kept in memory only) or **Copy Last** |
 | Change settings | Menu → **Settings…** (⌘,) |
@@ -19,6 +20,33 @@ configuration, how it works, and troubleshooting.
   channels) before the text is ready, it's copied instead of pasted, and the overlay says so: press ⌘V where you want it.
 - **Password fields.** Dictation doesn't start in one, and text is never pasted into one.
 - **Bluetooth earbuds.** Wait for the start sound before speaking. They take about 1.5 s to switch into headset mode.
+
+## Command Mode
+
+Select some text, press **⌃⌥⇧Space** (change it in **Settings → General**), say what to do, and press it again (or hold it
+while you speak). Before you speak, the overlay says what the command will act on:
+
+| The overlay says | What happens |
+|---|---|
+| **12 words selected** | The answer replaces the selection. ⌘Z brings the original back |
+| **Follow-up · 12 words** | You're changing the last result ("shorter still", "no, keep the first sentence", "go back to the original") |
+| **Last dictation** | Nothing was selected, but you just dictated: it edits that ("make that Thursday") |
+| **Write at cursor** | Nothing selected: it writes new text at the cursor ("write a two-line thank-you to the team") |
+| **Copy only** | Text you can't edit (a web page, a PDF), a terminal, or no text field: the answer goes to the clipboard |
+
+- Things to say: "make this shorter and more polite", "turn this into bullet points", "change 5 PM to 6 PM", "translate
+  to Spanish", "it's T-O-N-I" (a spelled-out name fixes it), "fix the grammar", "summarize this" (on a web page).
+- **Follow-ups** work for a minute after an edit: in most native apps just press the key again; elsewhere select the
+  result first. **Menu → Restore Original Text** puts back the text from before the first edit, for 5 minutes.
+- **It never guesses where to paste.** If the selection changed or you switched apps while it worked, the answer is copied
+  instead ("Selection changed: result copied"). Password fields are refused.
+- **What's sent:** the selected text and your spoken instruction, to Claude (or the API, in **Settings → Cleanup →
+  Command Mode uses**), only when you press the key. S1-mini can't follow instructions, so Command Mode doesn't use it,
+  and it doesn't work offline.
+- **Up to 6,000 characters** (about 1,000 words) of selection.
+- **Reading the selection.** It tries Accessibility first. Where that doesn't work, it presses the app's own Edit ▸ Copy
+  (no beep), and puts your clipboard back afterwards. In a few apps (canvas editors, some terminals) it can't read the
+  selection: the overlay then says **Write at cursor**, so you know before you speak.
 
 ## Modes
 

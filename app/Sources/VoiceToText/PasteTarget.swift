@@ -70,6 +70,76 @@ struct PasteTarget {
             .trimmingCharacters(in: .whitespaces)
     }
 
+    /// Selects the `text` that ends at the cursor (our last paste), so the next paste replaces it, and returns where the
+    /// cursor was (to put it back if the command doesn't paste). Nil when the app can't do that through Accessibility
+    /// (many Electron and web apps), or the text before the cursor isn't exactly our text: then nothing is changed.
+    static func selectBeforeCursor(_ text: String) -> Int? {
+        guard let focused = focusedElement(), let cursor = selectedRange(focused), cursor.length == 0 else { return nil }
+        let length = (text as NSString).length // Accessibility ranges count UTF-16 units, like NSString
+        guard length > 0, cursor.location >= length else { return nil }
+        // Check first, change second: a rich paste (bullets), or typing after it, means the text there isn't ours.
+        var before = CFRange(location: cursor.location - length, length: length)
+        guard let beforeRange = AXValueCreate(.cfRange, &before) else { return nil }
+        var existing: CFTypeRef?
+        guard AXUIElementCopyParameterizedAttributeValue(focused, kAXStringForRangeParameterizedAttribute as CFString,
+                                                         beforeRange, &existing) == .success,
+              (existing as? String) == text else { return nil }
+        guard AXUIElementSetAttributeValue(focused, kAXSelectedTextRangeAttribute as CFString, beforeRange) == .success,
+              (attribute(focused, kAXSelectedTextAttribute) as String?) == text else {
+            placeCursor(at: cursor.location, in: focused)
+            return nil
+        }
+        return cursor.location
+    }
+
+    /// Puts the cursor back at `location` (after a command that selected our last paste didn't replace it), if our text
+    /// is still what's selected.
+    static func undoSelect(_ text: String, cursor location: Int) {
+        guard let focused = focusedElement(), (attribute(focused, kAXSelectedTextAttribute) as String?) == text else { return }
+        placeCursor(at: location, in: focused)
+    }
+
+    /// The selected text in the focused element right now, for checking before a replace. `markers` also reads WebKit
+    /// and Chromium web content. Nil means unknown (the app doesn't say); "" means nothing is selected.
+    static func currentSelection(markers: Bool) -> String? {
+        guard let focused = focusedElement() else { return nil }
+        let plain: String? = attribute(focused, kAXSelectedTextAttribute)
+        if let plain, !plain.isEmpty { return plain }
+        if markers {
+            var range: CFTypeRef?
+            var text: CFTypeRef?
+            if AXUIElementCopyAttributeValue(focused, "AXSelectedTextMarkerRange" as CFString, &range) == .success, let range,
+               AXUIElementCopyParameterizedAttributeValue(focused, "AXStringForTextMarkerRange" as CFString, range,
+                                                          &text) == .success, let marked = text as? String, !marked.isEmpty {
+                return marked
+            }
+            return nil // web content often reports "" for the attribute even with a selection
+        }
+        return plain
+    }
+
+    private static func focusedElement() -> AXUIElement? {
+        guard AXIsProcessTrusted(), let app = NSWorkspace.shared.frontmostApplication else { return nil }
+        let appElement = AXUIElementCreateApplication(app.processIdentifier)
+        AXUIElementSetMessagingTimeout(appElement, 0.3)
+        return attribute(appElement, kAXFocusedUIElementAttribute)
+    }
+
+    private static func selectedRange(_ element: AXUIElement) -> CFRange? {
+        var value: CFTypeRef?
+        guard AXUIElementCopyAttributeValue(element, kAXSelectedTextRangeAttribute as CFString, &value) == .success,
+              let value, CFGetTypeID(value) == AXValueGetTypeID() else { return nil }
+        var range = CFRange()
+        return AXValueGetValue(value as! AXValue, .cfRange, &range) ? range : nil
+    }
+
+    private static func placeCursor(at location: Int, in element: AXUIElement) {
+        var cursor = CFRange(location: location, length: 0)
+        if let value = AXValueCreate(.cfRange, &cursor) {
+            AXUIElementSetAttributeValue(element, kAXSelectedTextRangeAttribute as CFString, value)
+        }
+    }
+
     /// Up to `count` characters just before the cursor in the focused text field, or nil when the app doesn't say
     /// (many Electron and web apps). Used to check that the last paste is still what the user sees before swapping it.
     static func textBeforeCursor(count: Int) -> String? {

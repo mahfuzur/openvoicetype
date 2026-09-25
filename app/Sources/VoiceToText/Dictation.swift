@@ -10,6 +10,8 @@ import Foundation
 /// mode for that app. The app delegate checks the target again before pasting.
 final class Dictation {
     enum State { case idle, starting, recording, transcribing, polishing, testingMic }
+    /// A dictation (clean up and paste what you said), or a Command Mode instruction (do what you said to the selection).
+    enum Job { case dictation, command }
 
     /// Stage timings for one dictation, for the `APP TIMING` log line.
     struct Timing {
@@ -64,8 +66,20 @@ final class Dictation {
         let timing: Timing
     }
 
+    /// A finished Command Mode instruction: the new text, or a failure (the reason is in `details`).
+    struct CommandResult {
+        let text: String
+        let instruction: String
+        let failed: Bool
+        let details: CleanupDetails
+        let plan: CommandPlan
+        let context: DictationContext
+        let timing: Timing
+    }
+
     enum Outcome {
         case text(Result)
+        case command(CommandResult)
         case noSpeech
         case cancelled
         case failed(String)
@@ -75,6 +89,14 @@ final class Dictation {
 
     private(set) var state: State = .idle {
         didSet { onStateChange?(state) }
+    }
+    private(set) var job: Job = .dictation
+    /// For a command: what it acts on, decided by the app once it has read the selection (just after the key press).
+    var commandPlan: CommandPlan?
+    /// For a command the app decided not to run (a selection too long): the message. The command ends with `.refused`
+    /// whenever it's set, whether it's still recording or already transcribing.
+    var commandRefusal: String? {
+        didSet { if commandRefusal != nil, state == .starting || state == .recording { cancel() } }
     }
 
     var onStateChange: ((State) -> Void)?
@@ -124,12 +146,15 @@ final class Dictation {
         }
     }
 
-    func start() {
+    func start(_ job: Job = .dictation) {
         guard state == .idle else { return }
         let target = PasteTarget.capture()
         guard !target.isSecure else {
             return finish(.refused("Not in password fields"))
         }
+        self.job = job
+        commandPlan = nil
+        commandRefusal = nil
         startTarget = target
         startContext = contextProvider?() ?? DictationContext.current(override: nil)
         state = .starting
@@ -197,6 +222,7 @@ final class Dictation {
             let raw = output.trimmingCharacters(in: .whitespacesAndNewlines)
             guard status == 0 else { self.dropPrestart(); return self.finish(.failed("Transcription failed")) }
             guard !raw.isEmpty else { self.dropPrestart(); return self.finish(.noSpeech) }
+            if self.job == .command { return self.runCommand(instruction: raw, context: context, timing: timing) }
 
             // Always run `refine`: with cleanup off or in Raw mode it skips the model but still applies
             // the dictionary replacements and output filter. S1-mini has no code style, so it skips code mode.
@@ -240,6 +266,7 @@ final class Dictation {
         maxDurationTimer?.invalidate()
         recorder.cancel()
         dropPrestart()
+        if job == .command, let refusal = commandRefusal { return finish(.refused(refusal)) }
         finish(.cancelled)
     }
 
@@ -257,7 +284,7 @@ final class Dictation {
             timeout: 60) { [weak self] status, output, details in
             guard let self else { return }
             let text = output.trimmingCharacters(in: .whitespacesAndNewlines)
-            let problem = details.map(Self.problemDescription) ?? nil
+            let problem = details.flatMap { Self.problemDescription($0) }
             let engine: String = switch status {
             case 0 where !self.settings.refine: "No cleanup (turned off)"
             case 0: Self.engineName(details?.engine ?? "", settings: self.settings)
@@ -280,8 +307,9 @@ final class Dictation {
     }
 
     /// Why the online engine failed, for the overlay and the test result; nil when nothing failed or it was offline.
-    static func problemDescription(_ details: CleanupDetails) -> String? {
-        let claude = AppSettings.shared.cleanupEngine != "openai" // the online engine that failed
+    /// `engine` is the online engine that ran: the cleanup engine, or Command Mode's.
+    static func problemDescription(_ details: CleanupDetails, engine: String = AppSettings.shared.cleanupEngine) -> String? {
+        let claude = engine != "openai"
         switch details.error {
         case "limit":
             let resets = details.resets.isEmpty ? "" : ", resets \(details.resets)"
@@ -321,12 +349,51 @@ final class Dictation {
         }
     }
 
-    /// Starts the slow parts while you speak: loads whisper-server, and launches `refine`, which starts Claude and
-    /// then waits for the transcript. It uses the context fixed when recording started.
+    /// Command Mode, after the instruction is transcribed: writes the plan to the waiting `command`'s file, sends it the
+    /// instruction, and reports the new text (or why there's none).
+    private func runCommand(instruction: String, context: DictationContext, timing startTiming: Timing) {
+        var timing = startTiming
+        if let refusal = commandRefusal {
+            dropPrestart()
+            return finish(.refused(refusal))
+        }
+        guard let plan = commandPlan else {
+            dropPrestart()
+            return finish(.failed("Couldn't read the selection"))
+        }
+        let run = prestartedRefine ?? launch(["command"], extraEnv: Self.contextEnv(context))
+        prestartedRefine = nil
+        timing.prestarted = run != nil
+        guard let run, let file = run.commandURL,
+              let data = try? JSONSerialization.data(withJSONObject: plan.payload),
+              FileManager.default.createFile(atPath: file.path, contents: data, attributes: [.posixPermissions: 0o600]) else {
+            run?.terminate()
+            return finish(.failed("Command Mode couldn't start"))
+        }
+        state = .polishing
+        let started = Date()
+        // Claude has 30 s for a command (a long selection takes a while), and a stream the script can't read gets one
+        // more try as a one-shot call, so the watchdog allows both.
+        run.finish(input: instruction, timeout: 75) { status, output, details in
+            timing.cleanupMs = Self.milliseconds(since: started)
+            let text = output.trimmingCharacters(in: .whitespacesAndNewlines)
+            self.finish(.command(CommandResult(text: text, instruction: instruction, failed: status != 0 || text.isEmpty,
+                                               details: details ?? CleanupDetails(), plan: plan, context: context,
+                                               timing: timing)))
+        }
+    }
+
+    /// Starts the slow parts while you speak: loads whisper-server, and launches `refine` (or `command`), which starts
+    /// Claude and then waits for the transcript. It uses the context fixed when recording started.
     private func prestart() {
         server("whisper-server", ["start"])
         dropPrestart()
-        guard let context = startContext, settings.refine, context.mode != .raw,
+        guard let context = startContext else { return }
+        if job == .command {
+            prestartedRefine = launch(["command"], extraEnv: Self.contextEnv(context))
+            return
+        }
+        guard settings.refine, context.mode != .raw,
               let run = launch(["refine"], extraEnv: Self.contextEnv(context)) else { return }
         prestartedRefine = run
     }
@@ -358,6 +425,7 @@ final class Dictation {
         env["VTT_LOG_TEXT"] = settings.logText ? "on" : "off"
         env["VTT_OPENAI_BASE_URL"] = settings.openaiBaseURL.trimmingCharacters(in: .whitespaces)
         env["VTT_OPENAI_MODEL"] = settings.openaiModel.trimmingCharacters(in: .whitespaces)
+        env["VTT_COMMAND_ENGINE"] = settings.commandEngine
         if let helpers = BundledHelpers.directory { env["VTT_BIN_DIR"] = helpers.path }
         if let model = ModelCatalog.whisperModel(named: settings.whisperModel), model.isInstalled {
             env["VTT_WHISPER_MODEL"] = model.path.path
@@ -377,20 +445,29 @@ final class Dictation {
         var env = extraEnv
         var files: [URL] = []
         var resultURL: URL?
-        if args.first == "refine" {
+        var commandURL: URL?
+        if args.first == "refine" || args.first == "command" {
             try? FileManager.default.createDirectory(at: Self.workDirectory, withIntermediateDirectories: true)
             let result = Self.workDirectory.appendingPathComponent("result-\(UUID().uuidString).json")
             env["VTT_RESULT_FILE"] = result.path
             files.append(result)
             resultURL = result
-            if settings.cleanupEngine == "openai", let key = APIKeychain.key(for: settings.openaiBaseURL),
+            if args.first == "command" {
+                // Written when the instruction is ready (the selection is read just after the key press).
+                let command = Self.workDirectory.appendingPathComponent("result-command-\(UUID().uuidString).json")
+                env["VTT_COMMAND_FILE"] = command.path
+                files.append(command)
+                commandURL = command
+            }
+            let engine = args.first == "command" ? settings.commandEngine : settings.cleanupEngine
+            if engine == "openai", let key = APIKeychain.key(for: settings.openaiBaseURL),
                let keyFile = Self.privateFile(named: "key-\(UUID().uuidString)", contents: key) {
                 env["VTT_OPENAI_KEY_FILE"] = keyFile.path
                 files.append(keyFile)
             }
         }
         let run = ScriptRun(scriptPath: scriptURL.path, args: args, environment: environment(env), files: files,
-                            resultURL: resultURL)
+                            resultURL: resultURL, commandURL: commandURL)
         if run == nil { files.forEach { try? FileManager.default.removeItem(at: $0) } }
         return run
     }
@@ -420,10 +497,14 @@ final class ScriptRun {
     /// Deleted when the process exits (the result file, a key file).
     private let files: [URL]
     private let resultURL: URL?
+    /// `command` only: where its JSON goes (`VTT_COMMAND_FILE`).
+    let commandURL: URL?
 
-    init?(scriptPath: String, args: [String], environment: [String: String], files: [URL] = [], resultURL: URL? = nil) {
+    init?(scriptPath: String, args: [String], environment: [String: String], files: [URL] = [], resultURL: URL? = nil,
+          commandURL: URL? = nil) {
         self.files = files
         self.resultURL = resultURL
+        self.commandURL = commandURL
         process.executableURL = URL(fileURLWithPath: "/bin/bash")
         process.arguments = [scriptPath] + args
         process.environment = environment

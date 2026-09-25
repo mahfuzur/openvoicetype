@@ -151,15 +151,27 @@ struct ClaudeStatusView: View {
 
 /// Click, then press the new key combination. Esc cancels, and so does leaving the window.
 struct HotKeyRecorder: View {
-    /// Which shortcut this records: dictation, or swapping the last paste.
-    enum Slot { case dictation, swap }
+    /// Which shortcut this records: dictation, swapping the last paste, or Command Mode.
+    enum Slot: CaseIterable { case dictation, swap, command }
     var slot: Slot = .dictation
     @ObservedObject private var settings = AppSettings.shared
     @ObservedObject private var capture = HotKeyCapture.shared
 
-    private var combo: HotKey.Combo { slot == .dictation ? settings.hotKey : settings.swapHotKey }
-    private var defaultCombo: HotKey.Combo { slot == .dictation ? HotKey.Combo.defaultCombo : HotKey.Combo.defaultSwapCombo }
-    private var error: String? { slot == .dictation ? settings.hotKeyError : settings.swapHotKeyError }
+    private var combo: HotKey.Combo { HotKeyCapture.combo(for: slot) }
+    private var defaultCombo: HotKey.Combo {
+        switch slot {
+        case .dictation: HotKey.Combo.defaultCombo
+        case .swap: HotKey.Combo.defaultSwapCombo
+        case .command: HotKey.Combo.defaultCommandCombo
+        }
+    }
+    private var error: String? {
+        switch slot {
+        case .dictation: settings.hotKeyError
+        case .swap: settings.swapHotKeyError
+        case .command: settings.commandHotKeyError
+        }
+    }
     private var recording: Bool { settings.isRecordingHotKey && capture.slot == slot }
 
     var body: some View {
@@ -199,9 +211,9 @@ final class HotKeyCapture: ObservableObject {
             if event.keyCode == 53 && event.modifierFlags.intersection([.command, .option, .control, .shift]).isEmpty {
                 self.stop()
             } else if let combo = HotKey.Combo(event: event) {
-                let other = self.slot == .dictation ? self.settings.swapHotKey : self.settings.hotKey
-                if combo == other {
-                    self.hint = "\(combo.label) is already the other shortcut"
+                let others = HotKeyRecorder.Slot.allCases.filter { $0 != self.slot }.map(Self.combo(for:))
+                if others.contains(combo) {
+                    self.hint = "\(combo.label) is already another shortcut"
                 } else {
                     self.set(combo, for: self.slot)
                     self.stop()
@@ -217,6 +229,16 @@ final class HotKeyCapture: ObservableObject {
         switch slot {
         case .dictation: settings.hotKey = combo
         case .swap: settings.swapHotKey = combo
+        case .command: settings.commandHotKey = combo
+        }
+    }
+
+    static func combo(for slot: HotKeyRecorder.Slot) -> HotKey.Combo {
+        let settings = AppSettings.shared
+        switch slot {
+        case .dictation: return settings.hotKey
+        case .swap: return settings.swapHotKey
+        case .command: return settings.commandHotKey
         }
     }
 

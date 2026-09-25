@@ -38,6 +38,12 @@ final class DictationHistory {
         if entries.count > 10 { entries.removeLast() }
     }
 
+    /// Something else was pasted since (a Command Mode result): ⌘Z would no longer undo the dictation, so a swap only copies.
+    func invalidateLast() {
+        guard !entries.isEmpty else { return }
+        entries[0].wasPasted = false
+    }
+
     /// After a swap: the other version is now in the app.
     func swappedLast(pasted: Bool) {
         guard !entries.isEmpty else { return }
