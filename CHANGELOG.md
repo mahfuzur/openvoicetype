@@ -1,5 +1,38 @@
 # Changelog
 
+## 0.3.0 (unreleased)
+
+**The trust release.** Fixes from an outside review of 0.2.0, before new features.
+
+- **Your words stay out of the log.** Dictated text is no longer logged by default (Settings → About turns it on for
+  debugging), and text an older version logged is removed on the first run. The logs rotate at 1 MB and are private to you.
+- **Text goes where you started dictating.** If you switch apps, windows or Slack channels while the text is being
+  prepared, it's copied instead of pasted, and the overlay says so. Dictation never starts in, or pastes into, a password
+  field.
+- **Safer pasting.** Your clipboard comes back once the app has actually read the paste (slow apps no longer get the old
+  clipboard), and clipboard managers skip our temporary copies. A held hotkey no longer leaks ⌃⌥ into the ⌘V, and ⌘V
+  works in Dvorak and other layouts.
+- **The meaning guard.** If a cleanup drops a number or a "not", Whisper's own text is pasted instead, and the overlay says
+  what went missing.
+- **⌃⌥Z swaps the last paste** between the cleaned text and Whisper's text. **Recent Dictations** in the menu keeps the last
+  10, in memory only.
+- **Claude, isolated and honest about failures.**
+  - `--safe-mode` keeps your own CLAUDE.md, memory, skills and hooks out of every dictation.
+  - An exported `ANTHROPIC_API_KEY` is ignored, so dictation never quietly bills the API.
+  - The overlay says why cleanup didn't run: "Claude limit reached · resets 3:45 PM", "Claude isn't signed in", or
+    "Claude Code changed how scripts sign in".
+  - A usage limit or sign-in error falls back to S1-mini at once instead of waiting for the timeout.
+- **A second cleanup provider: any OpenAI-compatible API.** Ollama or LM Studio on your Mac, or OpenAI, Groq, OpenRouter
+  and others, with your key in the Keychain (Settings → Cleanup, with Load Models). S1-mini stays the offline fallback.
+- **Prompt:** a dictated "ignore your rules" or "you are now a…" is kept as text, never dropped or obeyed.
+- **The eval has 5 new safety cases** (numbers, negations, prompt injection), and `--cleanup openai`.
+- **README:** shorter, honest about maturity, with the eval results and how they were measured. The details moved to
+  [docs/GUIDE.md](docs/GUIDE.md). [docs/TERMS.md](docs/TERMS.md) is updated with Anthropic's current wording.
+- **Installing from source:**
+  - `install.sh` is only for the `dictate` command. It downloads the compressed model (574 MB instead of 1.6 GB), and
+    S1-mini only with `--with-s1-mini`.
+  - `build-app.sh` checks its prerequisites and explains a signing failure.
+
 ## 0.2.0 (2026-09-25)
 
 **Voice to Text is now OpenVoiceType.** "Voice to Text" was too generic to find.

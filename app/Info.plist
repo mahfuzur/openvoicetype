@@ -2,29 +2,29 @@
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
 <plist version="1.0">
 <dict>
-    <key>CFBundleIdentifier</key>
-    <string>io.github.mahfuzur.openvoicetype</string>
-    <key>CFBundleName</key>
-    <string>OpenVoiceType</string>
-    <key>CFBundleDisplayName</key>
-    <string>OpenVoiceType</string>
-    <key>CFBundleIconFile</key>
-    <string>AppIcon</string>
-    <key>CFBundleExecutable</key>
-    <string>VoiceToText</string>
-    <key>CFBundlePackageType</key>
-    <string>APPL</string>
-    <key>CFBundleShortVersionString</key>
-    <string>0.1.1</string>
-    <key>CFBundleVersion</key>
-    <string>1</string>
-    <key>LSMinimumSystemVersion</key>
-    <string>13.3</string>
-    <key>LSUIElement</key>
-    <true/>
-    <key>NSHumanReadableCopyright</key>
-    <string>Copyright © 2026 Mahfuzur Rahman. MIT License.</string>
-    <key>NSMicrophoneUsageDescription</key>
-    <string>OpenVoiceType records your voice while you dictate. Audio is transcribed locally and deleted afterwards.</string>
+	<key>CFBundleDisplayName</key>
+	<string>OpenVoiceType</string>
+	<key>CFBundleExecutable</key>
+	<string>VoiceToText</string>
+	<key>CFBundleIconFile</key>
+	<string>AppIcon</string>
+	<key>CFBundleIdentifier</key>
+	<string>io.github.mahfuzur.openvoicetype</string>
+	<key>CFBundleName</key>
+	<string>OpenVoiceType</string>
+	<key>CFBundlePackageType</key>
+	<string>APPL</string>
+	<key>CFBundleShortVersionString</key>
+	<string>0.3.0</string>
+	<key>CFBundleVersion</key>
+	<string>1</string>
+	<key>LSMinimumSystemVersion</key>
+	<string>13.3</string>
+	<key>LSUIElement</key>
+	<true/>
+	<key>NSHumanReadableCopyright</key>
+	<string>Copyright © 2026 Mahfuzur Rahman. MIT License.</string>
+	<key>NSMicrophoneUsageDescription</key>
+	<string>OpenVoiceType records your voice while you dictate. Audio is transcribed locally and deleted afterwards.</string>
 </dict>
 </plist>

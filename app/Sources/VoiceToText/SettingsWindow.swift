@@ -16,12 +16,12 @@ final class SettingsWindowController: NSWindowController {
         super.init(window: window)
         tabs.tabStyle = .toolbar
         let panes: [(String, String, AnyView, CGFloat)] = [
-            ("General", "gearshape", AnyView(GeneralPane(actions: actions)), 640),
+            ("General", "gearshape", AnyView(GeneralPane(actions: actions)), 690),
             ("Speech", "waveform", AnyView(SpeechPane()), 400),
             ("Cleanup", "sparkles", AnyView(CleanupPane(actions: actions)), 620),
             ("Dictionary", "character.book.closed", AnyView(DictionaryPane()), 540),
             ("Modes", "rectangle.3.group", AnyView(ModesPane()), 500),
-            ("About", "info.circle", AnyView(AboutPane(actions: actions)), 520),
+            ("About", "info.circle", AnyView(AboutPane(actions: actions)), 600),
         ]
         for (title, symbol, view, height) in panes {
             let controller = NSHostingController(rootView: view.frame(width: 600, height: height))
@@ -92,7 +92,9 @@ struct GeneralPane: View {
                     Text("Press to start, press again to stop").tag(false)
                     Text("Hold while you speak (hold to talk)").tag(true)
                 }
-                Text("Esc cancels a recording.").font(.caption).foregroundColor(.secondary)
+                LabeledContent("Swap last paste") { HotKeyRecorder(slot: .swap) }
+                Text("Esc cancels a recording. Swap last paste replaces what was just pasted with Whisper's own text, or back.")
+                    .font(.caption).foregroundColor(.secondary)
             }
             Section("Microphone") {
                 Picker("Input", selection: $settings.inputDeviceUID) {
@@ -231,13 +233,18 @@ struct CleanupPane: View {
                 Toggle("Clean up text with AI", isOn: $settings.refine)
                 Picker("Clean up with", selection: $settings.cleanupEngine) {
                     Text("Claude (your Claude Code)").tag("claude")
+                    Text("An OpenAI-compatible API (Ollama, LM Studio, OpenAI, Groq…)").tag("openai")
                     Text("S1-mini (on this Mac, offline)").tag("s1")
                 }
                 .pickerStyle(.radioGroup)
                 .disabled(!settings.refine)
             } footer: {
-                Text("Cleanup removes filler words, fixes punctuation and formats lists. Off pastes Whisper's text as is.")
+                Text("Cleanup removes filler words, fixes punctuation and formats lists. Off pastes Whisper's text as is. "
+                    + "If a cleanup drops a number or a \u{201C}not\u{201D}, Whisper's text is pasted instead.")
                     .font(.caption).foregroundColor(.secondary)
+            }
+            if settings.cleanupEngine == "openai" {
+                APIEndpointSection()
             }
             Section("Claude") {
                 ClaudeStatusView()
@@ -256,8 +263,9 @@ struct CleanupPane: View {
             Section("S1-mini (offline)") {
                 // Not deletable while it's the cleanup engine: every dictation would lose its cleanup.
                 ModelRow(model: ModelCatalog.s1Mini, allowDelete: !settings.usesS1)
-                Toggle("Use S1-mini when Claude is unavailable (offline, signed out, an error)", isOn: $settings.s1Fallback)
-                    .disabled(!ModelCatalog.s1Mini.isInstalled || settings.cleanupEngine != "claude")
+                Toggle("Use S1-mini when Claude or the API is unavailable (offline, signed out, an error)",
+                       isOn: $settings.s1Fallback)
+                    .disabled(!ModelCatalog.s1Mini.isInstalled || settings.cleanupEngine == "s1")
                 Text("S1-mini by Superwhisper. English only; it leaves Code mode (editors, terminals) as raw text.")
                     .font(.caption).foregroundColor(.secondary)
             }
@@ -284,6 +292,111 @@ struct CleanupPane: View {
             testResult = (text, engine, seconds)
             testing = false
         }
+    }
+}
+
+/// The OpenAI-compatible endpoint: a service or your own base URL, the model, and the key (kept in the Keychain, per host).
+struct APIEndpointSection: View {
+    @ObservedObject private var settings = AppSettings.shared
+    @State private var key = ""
+    @State private var keyStatus: String?
+    @State private var models: [String] = []
+    @State private var loadStatus: String?
+    @State private var loading = false
+
+    static let presets: [(name: String, url: String)] = [
+        ("Ollama (on this Mac)", "http://localhost:11434/v1"),
+        ("LM Studio (on this Mac)", "http://localhost:1234/v1"),
+        ("OpenAI", "https://api.openai.com/v1"),
+        ("Groq", "https://api.groq.com/openai/v1"),
+        ("OpenRouter", "https://openrouter.ai/api/v1"),
+    ]
+
+    private var baseURL: String { settings.openaiBaseURL.trimmingCharacters(in: .whitespaces) }
+    private var isLocal: Bool {
+        let host = URL(string: baseURL)?.host ?? ""
+        return host == "localhost" || host.hasPrefix("127.") || host == "::1"
+    }
+
+    var body: some View {
+        Section {
+            Picker("Service", selection: Binding(
+                get: { Self.presets.first { $0.url == baseURL }?.url ?? "custom" },
+                set: { url in
+                    guard url != "custom" else { return }
+                    settings.openaiBaseURL = url
+                    models = []
+                    loadStatus = nil
+                    loadKey()
+                })) {
+                ForEach(Self.presets, id: \.url) { Text($0.name).tag($0.url) }
+                Text("Other (enter its base URL)").tag("custom")
+            }
+            TextField("Base URL", text: $settings.openaiBaseURL)
+                .onSubmit(loadKey)
+            HStack {
+                TextField("Model", text: $settings.openaiModel, prompt: Text("Load Models lists them"))
+                if !models.isEmpty {
+                    Menu("Choose") {
+                        ForEach(models, id: \.self) { model in Button(model) { settings.openaiModel = model } }
+                    }
+                    .fixedSize()
+                }
+                Button(loading ? "Loading…" : "Load Models", action: loadModels).disabled(loading || baseURL.isEmpty)
+            }
+            HStack {
+                SecureField("API key", text: $key, prompt: Text(isLocal ? "Not needed for Ollama or LM Studio" : "Paste your key"))
+                Button("Save") {
+                    keyStatus = APIKeychain.setKey(key, for: baseURL)
+                        ? (key.isEmpty ? "Key removed" : "Saved in your Keychain") : "The Keychain refused the key"
+                }
+            }
+            if let text = keyStatus ?? loadStatus {
+                Text(text).font(.caption).foregroundColor(.secondary)
+            }
+        } header: {
+            Text("API")
+        } footer: {
+            Text(isLocal ? "Runs on this Mac: the transcript stays here. Your audio never leaves the Mac."
+                : "Only the transcript text is sent to \(APIKeychain.account(baseURL)), with your key; never your audio. "
+                    + "That service's terms and prices apply.")
+                .font(.caption).foregroundColor(.secondary)
+        }
+        .onAppear(perform: loadKey)
+    }
+
+    private func loadKey() {
+        key = APIKeychain.key(for: baseURL) ?? ""
+        keyStatus = nil
+    }
+
+    /// `GET <base>/models`: every OpenAI-compatible server lists its models there.
+    private func loadModels() {
+        guard let url = URL(string: baseURL.hasSuffix("/") ? baseURL + "models" : baseURL + "/models") else {
+            loadStatus = "That base URL isn't valid"
+            return
+        }
+        var request = URLRequest(url: url, timeoutInterval: 10)
+        if let saved = APIKeychain.key(for: baseURL) { request.setValue("Bearer \(saved)", forHTTPHeaderField: "Authorization") }
+        loading = true
+        URLSession.shared.dataTask(with: request) { data, response, error in
+            let status = (response as? HTTPURLResponse)?.statusCode ?? 0
+            let ids = (data.flatMap { try? JSONSerialization.jsonObject(with: $0) } as? [String: Any])?["data"]
+                .flatMap { $0 as? [[String: Any]] }?.compactMap { $0["id"] as? String }.sorted() ?? []
+            DispatchQueue.main.async {
+                loading = false
+                keyStatus = nil
+                models = ids
+                if !ids.isEmpty {
+                    loadStatus = "Found \(ids.count) model\(ids.count == 1 ? "" : "s"). Choose one."
+                } else if let error {
+                    loadStatus = "Couldn't reach it: \(error.localizedDescription)"
+                } else {
+                    loadStatus = status == 401 || status == 403 ? "The server wants an API key (save it first)"
+                        : "No models found (HTTP \(status))"
+                }
+            }
+        }.resume()
     }
 }
 
@@ -477,6 +590,9 @@ struct AboutPane: View {
                 .buttonStyle(.link)
             }
             Section("Help") {
+                Toggle("Keep dictated text in the log (for debugging)", isOn: $settings.logText)
+                Text("Off: the log keeps timings and outcomes only, and text an older version logged is removed.")
+                    .font(.caption).foregroundColor(.secondary)
                 HStack {
                     Button("Run Setup Again…") { actions.openSetup() }
                     Button("Open Log") {

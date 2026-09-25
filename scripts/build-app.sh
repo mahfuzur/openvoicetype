@@ -17,6 +17,18 @@ OUT="$PKG_DIR/build/$APP_NAME.app"
 INSTALL_DIR="/Applications"
 BUNDLE_DEPS="${BUNDLE_DEPS:-on}"
 
+# Prerequisites first, with what to do about them (a fresh Mac has neither).
+if ! xcode-select -p >/dev/null 2>&1 || ! command -v swift >/dev/null; then
+  echo "The Xcode Command Line Tools are missing. Install them with: xcode-select --install" >&2
+  exit 1
+fi
+if [[ "$BUNDLE_DEPS" == on ]] && ! "$REPO_DIR/scripts/build-deps.sh" --check >/dev/null 2>&1 && ! command -v cmake >/dev/null; then
+  echo "cmake is needed to build whisper.cpp and llama.cpp into the app: brew install cmake" >&2
+  echo "(Just want to use the app? Download the DMG from the latest release instead: see the README.)" >&2
+  exit 1
+fi
+
+echo "Building the app..."
 swift build -c release --package-path "$PKG_DIR"
 BIN_DIR="$(swift build -c release --package-path "$PKG_DIR" --show-bin-path)"
 
@@ -70,10 +82,17 @@ else
     SIGN_ARGS=(--sign -)
   fi
 fi
+sign_failed() {
+  echo "Signing $1 failed (above). Check the Command Line Tools with: xcode-select -p && xcrun --find codesign_allocate" >&2
+  echo "If they look broken, reinstall them: sudo rm -rf /Library/Developer/CommandLineTools && xcode-select --install" >&2
+  exit 1
+}
 for helper in "$OUT"/Contents/Helpers/*; do
-  [[ -f "$helper" ]] && codesign --force "${SIGN_ARGS[@]}" "$helper"
+  [[ -f "$helper" ]] || continue
+  codesign --force "${SIGN_ARGS[@]}" "$helper" || sign_failed "$helper"
 done
-codesign --force "${SIGN_ARGS[@]}" --entitlements "$PKG_DIR/VoiceToText.entitlements" --identifier "$BUNDLE_ID" "$OUT"
+codesign --force "${SIGN_ARGS[@]}" --entitlements "$PKG_DIR/VoiceToText.entitlements" --identifier "$BUNDLE_ID" "$OUT" ||
+  sign_failed "$OUT"
 echo "Built $OUT"
 
 # Installed under the product name, like the DMG does, replacing any older copy (including one named VoiceToText.app).

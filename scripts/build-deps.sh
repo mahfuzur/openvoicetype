@@ -19,7 +19,9 @@ if [[ -x "$OUT/bin/whisper-server" && -x "$OUT/bin/whisper-cli" && -x "$OUT/bin/
   echo "$OUT/bin"
   exit 0
 fi
+[[ "${1:-}" == --check ]] && exit 1 # --check: only says whether the helpers are already built
 command -v cmake >/dev/null || { echo "cmake not found (brew install cmake)" >&2; exit 1; }
+echo "Building whisper.cpp and llama.cpp for the app (first time only, about 3 minutes)..." >&2
 
 COMMON=(
   -DCMAKE_BUILD_TYPE=Release

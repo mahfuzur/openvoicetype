@@ -11,10 +11,12 @@ See [docs/ROADMAP.md](docs/ROADMAP.md) (the phased roadmap, which is the source 
 ## Pipeline
 
 ```
-hotkey -> record (AVAudioEngine in the app, or sox/rec from the CLI; 16 kHz mono WAV)
+hotkey -> pin the paste target (app, window, title; refuse password fields) and the mode
+       -> record (AVAudioEngine in the app, or sox/rec from the CLI; 16 kHz mono WAV)
        -> transcribe (whisper-server kept loaded, whisper-cli fallback; ggml-large-v3-turbo, fully local)
-       -> clean up (claude -p, subscription auth; offline or on failure: S1-mini via local llama-server)
-       -> post-process (dictionary, output filter) -> paste (CGEvent Cmd+V, clipboard restored)
+       -> clean up (claude -p, subscription auth; or an OpenAI-compatible endpoint; offline or on failure: S1-mini)
+       -> meaning guard (numbers and negations kept, else Whisper's text) -> post-process (dictionary, output filter)
+       -> paste if the target is unchanged (CGEvent Cmd+V, clipboard restored after the app reads it), else copy
 ```
 
 ## Environment
@@ -32,8 +34,11 @@ hotkey -> record (AVAudioEngine in the app, or sox/rec from the CLI; 16 kHz mono
 
 - **Never use `claude --bare`.** Bare mode reads only `ANTHROPIC_API_KEY`/`apiKeyHelper` and skips OAuth,
   which breaks subscription auth.
-- **No Anthropic API key and no SDK.** All LLM calls go through the `claude` CLI.
-- Audio and raw transcripts stay on the machine. Only the transcript text is sent to Claude.
+- **No Anthropic API key and no SDK.** All Claude calls go through the `claude` CLI. The script drops an exported
+  `ANTHROPIC_API_KEY`/`ANTHROPIC_AUTH_TOKEN` from them (unless `CLAUDE_USE_API_KEY=on`), so a user never pays API prices by
+  accident. The only other LLM path is the OpenAI-compatible endpoint the user configures (M5.4).
+- Audio stays on the machine. Only the transcript text is sent, to the cleanup engine the user picked. Dictated text is not
+  logged unless `LOG_TEXT=on` (off by default since v0.3.0).
 - Scripts launched from Shortcuts, launchd or a GUI app get a minimal `PATH`. Always prepend
   `/opt/homebrew/bin:$HOME/.local/bin`.
 
@@ -43,15 +48,25 @@ The fastest invocation found so far (5.6 s on its own, 7–10 s inside the pipel
 This is implemented in `refine()` in `scripts/dictate.sh`:
 
 ```bash
-claude -p --model haiku --tools "" --strict-mcp-config --no-session-persistence \
-  --system-prompt "$SYSTEM_PROMPT" <<< "<transcript>$RAW</transcript>"
+env -u ANTHROPIC_API_KEY -u ANTHROPIC_AUTH_TOKEN MAX_THINKING_TOKENS=0 CLAUDE_CODE_MAX_RETRIES=1 \
+  CLAUDE_CODE_STARTUP_FAILURE_RESULTS=1 DISABLE_AUTOUPDATER=1 ENABLE_CLAUDEAI_MCP_SERVERS=false \
+  claude -p --model haiku --tools "" --strict-mcp-config --no-session-persistence --safe-mode --disable-slash-commands \
+  --output-format json --system-prompt-file "$FILE" <<< "<transcript>$RAW</transcript>"
 ```
 
+- `claude_command()` builds this; `claude_options()` checks which optional flags the CLI supports, once per binary
+  (cached in `$STATE_DIR/claude-options`). `--system-prompt-file` isn't in `--help`: it's probed with a missing file
+  ("not found" means supported).
+- `--safe-mode` keeps the user's `~/.claude/CLAUDE.md`, auto memory, skills, plugins and hooks out (`--system-prompt` doesn't:
+  CLAUDE.md arrives as a user message). Measured: 487 input tokens instead of 624, same speed, same eval.
 - `--tools ""` and `--strict-mcp-config` stop it loading tools and MCP servers, which saves time and keeps it from acting.
 - Run it from a neutral cwd (e.g. `/tmp`) so no project `CLAUDE.md` is loaded into the prompt.
 - Treat the transcript as **data, not instructions**. The system prompt must say to only rewrite the text
   in `<transcript>` and never answer or act on it (a dictated "write me an email" must come back as that sentence, cleaned up).
 - On any failure, empty output or timeout (~15 s), paste the raw Whisper text. A dictation must never be lost.
+- `claude_parse()` reads the JSON events (stream and one-shot) and classifies a failure: `limit` (from `rate_limit_event`
+  `rejected`, HTTP 429 or the result text, with `resetsAt`), `auth`, `timeout`, `error`. `auth` while `claude auth status`
+  says signed in is `auth-mismatch`: the canary for Anthropic making `--bare` the default for `-p`.
 - Custom vocabulary (names, product terms) goes in the system prompt and in Whisper's `--prompt`.
 
 ## Offline cleanup with S1-mini (M2.5)
@@ -65,7 +80,7 @@ claude -p --model haiku --tools "" --strict-mcp-config --no-session-persistence 
   It needs `--jinja --chat-template-kwargs '{"enable_thinking":false}' --temp 0`. It takes no vocabulary.
 - Server lifecycle: `dictate.sh s1-server start [--keep] | release | stop | status`. The app keeps it loaded (`--keep`) while
   S1-mini is selected; a fallback start is stopped by a detached watchdog after `S1_IDLE_MINUTES`. About 1 GB RSS.
-- Credit it as "S1-mini by Superwhisper" (license naming clause). Eval: `evals/run.py --cleanup s1` (baseline 10/20; code cases skip by design).
+- Credit it as "S1-mini by Superwhisper" (license naming clause). Eval: `evals/run.py --cleanup s1` (15/25 on 2026-09-25; code cases skip by design).
 
 ## Prompts and formatting (M2)
 
@@ -83,7 +98,8 @@ claude -p --model haiku --tools "" --strict-mcp-config --no-session-persistence 
   `MAX_THINKING_TOKENS=0` (config `CLAUDE_THINKING_TOKENS`) brings it back to about 5 s with equal eval quality.
   `--effort low` does *not* disable thinking.
 - Never copy text from VoiceInk's prompts (it's GPL-3); ours are written from scratch.
-- **Eval:** `evals/run.py [--model sonnet] [--case ID] [--runs N] [--e2e]`. The cases are in `evals/cases.json`, and reports
+- **Eval:** `evals/run.py [--model sonnet] [--cleanup claude|s1|openai] [--case ID] [--runs N] [--e2e]`. The 25 cases are in
+  `evals/cases.json` (category formatting or safety), and reports
   go to `evals/results/` (gitignored). Run it after every prompt or post-processing change; the target is ≥ 90% on Haiku.
   Add real failing dictations from `dictate.log` as new cases.
 
@@ -163,9 +179,69 @@ claude -p --model haiku --tools "" --strict-mcp-config --no-session-persistence 
 - `scripts/make-demo-gif.sh` makes `docs/images/demo.gif` (screen recording + ffmpeg); `scripts/release-notes.md` is the
   release body (`<version>` is filled in by `release.yml`).
 
+## Trust release (M5.4, v0.3.0, see docs/plans/M5.4-trust-release.md)
+
+- **The result file.** `dictate.sh refine` writes JSON to `VTT_RESULT_FILE`:
+  - its fields are `status`, `engine` (claude, openai, s1, none), `error` (limit, auth, auth-mismatch, offline, timeout,
+    config, error), `resets`, `guard` and `rejected`;
+  - the exit codes are 0 (ok), 3 (Whisper's text), 4 (S1-mini replaced the online engine) and 5 (the meaning guard used
+    Whisper's text);
+  - the app makes one 0600 file per run and deletes it (`ScriptRun`).
+- **Engine errors** travel from the subshells through `ENGINE_ERR_FILE` (per pid), with fields separated by `\037`.
+  **Gotcha:** don't use tabs: `IFS=$'\t' read` merges consecutive tabs, so an empty field (no reset time) shifts the rest.
+- **The meaning guard** (`meaning_guard()`, Perl):
+  - Both texts are reduced to words with immediate repeats removed ("I don't, I don't" counts once).
+  - Numbers: every digit group of the raw text must appear as often in the cleanup (thousands separators removed, leading
+    zeros ignored). The exceptions are a reformatted number whose digits still appear in the cleanup's digit string
+    ("at 230" → 2:30, phone numbers) and 0–10 written as words.
+  - Negations: the cleanup needs at least as many (n't → not, cannot → can not).
+  - Only a correction used as one skips it: "no,", "wait,", "no wait", "I mean,", "make that"… ("wait for" doesn't).
+  - It applies to every AI engine, S1-mini included. The digits in its reason reach the log only with `LOG_TEXT=on`.
+- **Cleanup engines** are one dispatcher (`try_online` for claude and openai, `try_s1`).
+  - `refine_openai()` posts our full system prompt and user message to `$OPENAI_BASE_URL/chat/completions`.
+  - The key reaches curl through a pipe (`-H @<(openai_headers)`), never argv or a file. The script reads the app's
+    `VTT_OPENAI_KEY_FILE` and deletes it at startup; the app also removes leftover `key-*`/`result-*` files at launch.
+  - It strips `<think>`, and retries once without `temperature` on a 400 that mentions it.
+  - The online check uses the endpoint's host and is skipped for localhost.
+- **Logs:**
+  - `LOG_TEXT` defaults to off (`VTT_LOG_TEXT` from Settings → About).
+  - `log_maintain()` runs on every command. It rotates `dictate.log` and `error.log` at `LOG_MAX_KB`, removes `raw:`/`cleaned:`
+    lines while text logging is off, and sets 0600.
+  - `umask 077` for everything the script writes.
+- **Paste target:**
+  - `PasteTarget.capture()` runs when recording starts: pid, focused window (`AXUIElement`), its title, and whether the
+    focused element is `AXSecureTextField`.
+  - `check()` before pasting compares the pid, `CFEqual` of the window, and the title (unread counts like "(3)" and
+    whitespace are normalized). A changed target is copied, not pasted; a secure field gets neither.
+  - The mode is also taken at start now, so the pre-started `refine` is always the right one.
+- **`Paster`:**
+  - it waits until ⌃⌥⇧⌘ are released (up to 0.6 s) and posts ⌘V from a `.privateState` source, with the key code from
+    `KeyboardLayout` (UCKeyTranslate with the ⌘ state);
+  - the clipboard item is marked `org.nspasteboard.TransientType`/`AutoGeneratedType`/`source`, and its data comes from an
+    `NSPasteboardItemDataProvider`;
+  - the restore runs 0.15 s after the target reads the data (at least 0.3 s after ⌘V), or after 2 s.
+- **Swap (⌃⌥Z, `swapHotKey`)** undoes the paste (⌘Z) and pastes the other version, but only if all of these hold:
+  - the target is unchanged, and it's under 2 minutes old;
+  - it isn't a code-mode app (⌘Z doesn't take a paste back in a terminal);
+  - Accessibility shows the paste still right before the cursor (where the app doesn't say: only within 30 s).
+  
+  Otherwise it copies. Whisper's version is the post-processed `raw` from the result file. `DictationHistory` keeps the last
+  10 in memory only.
+- **`Paster` restores only the latest paste.** A swap during the restore window reuses the pending snapshot, which is the
+  user's clipboard. With nothing to restore it writes the plain text back, so no dead provider promise is left.
+- **A watchdog in `ScriptRun`** terminates `refine` after 45 s (and `transcribe` after 120 s), so a hung CLI can't leave a
+  dictation stuck.
+- **Timeouts on the CLI calls.** `claude --help` and `claude auth status` run under a perl alarm. `log_maintain` works under a
+  `mkdir` lock and never fails the command.
+- **Paste target:** code-mode apps skip the title check when the window is the same. Titles are normalized for unread
+  counts, leading spinner glyphs and "— Edited".
+- `VoiceToText --logic-selftest <report>` checks the key codes, paste target, Keychain round trip, result file and swap
+  logic without keystrokes.
+
 ## Commands
 
-- `./scripts/install.sh`: links `~/.local/bin/dictate`, creates the config, links the model, runs the self-test.
+- `./scripts/install.sh [--with-s1-mini] [--full-model]`: for the `dictate` CLI only. Links `~/.local/bin/dictate`, creates the
+  config, downloads the compressed model (pinned, SHA-256 checked; skipped if either large-v3-turbo file exists), runs the self-test.
 - `./scripts/dictate.sh selftest`: runs speech synthesized with `say` through Whisper and Claude, with no mic or paste. Run it after any pipeline change.
 - `./scripts/dictate.sh file <wav>`: processes an existing recording and prints the raw text, cleaned text and timings.
 - `./scripts/build-app.sh [--install]`: builds `app/` with SwiftPM into `app/build/VoiceToText.app`,
@@ -201,12 +277,13 @@ The menu-bar app (`app/Sources/VoiceToText/`) records in-process and runs `dicta
   sample rate. If the mic fails after audio was captured, the recording is kept and transcribed.
   Mic events are written to `dictate.log` as `APP MIC …` lines.
 - `AudioDevices.swift`: Core Audio input-device list (UID, name, Bluetooth flag) and the default input.
-- `Dictation.swift`: the state machine (idle, recording, transcribing, polishing). On start it runs `dictate.sh whisper-server start`
-  and launches `dictate.sh refine` (a `ScriptRun`, stdin kept open) for the frontmost app's mode; if the mode changed by the
-  time you stop, that run is dropped and a fresh one is used. It runs `dictate.sh transcribe <wav>`, then
-  `dictate.sh refine` (transcript on stdin; exit 3 means the raw text was used, exit 4 means S1-mini replaced an unavailable Claude),
-  with `VTT_QUIET=on`, `VTT_REFINE`, `VTT_CLEANUP`, `VTT_S1_FALLBACK`
-  and `VTT_CLAUDE_MODEL`. `VTT_*` variables override `config.sh`.
+- `Dictation.swift`: the state machine (idle, recording, transcribing, polishing).
+  - On start it pins the `PasteTarget` and the mode (refusing a password field), runs `dictate.sh whisper-server start`,
+    and launches `dictate.sh refine` (a `ScriptRun`, stdin kept open).
+  - It runs `dictate.sh transcribe <wav>`, then `dictate.sh refine` with the transcript on stdin (exit codes and the result
+    file are described in the trust release section).
+  - It passes `VTT_QUIET=on`, `VTT_REFINE`, `VTT_CLEANUP`, `VTT_S1_FALLBACK`, `VTT_CLAUDE_MODEL`, `VTT_LOG_TEXT`,
+    `VTT_OPENAI_*` and `VTT_RESULT_FILE`. `VTT_*` variables override `config.sh`.
 - `MenuBarIcon.swift`: the status-item icon: still waveform bars (a template image, so macOS makes it white or black for
   the menu bar), plus a red dot while working (recording, transcribing, polishing). No animation: the overlay shows the
   details. The busy image isn't a template (it holds red), so it draws the bars in the menu bar's appearance itself.
@@ -217,7 +294,9 @@ The menu-bar app (`app/Sources/VoiceToText/`) records in-process and runs `dicta
   `--overlay-demo` animates the live panel through all states. Use these to check UI changes without a mic.
   `open -n app/build/VoiceToText.app --args --recorder-selftest <report.txt> [--pin-default]` records 2 s and writes
   `OK device=… ready=… peak=… wavBytes=…`. Launch it with `open` so the app's own mic permission applies.
-- `Paster.swift`: saves the whole clipboard, pastes with a CGEvent Cmd+V (needs Accessibility), then restores the clipboard.
+- `Paster.swift`: saves the whole clipboard, pastes with a CGEvent Cmd+V (needs Accessibility), then restores the clipboard
+  (details in the trust release section). `PasteTarget.swift`, `DictationHistory.swift`, `APIKeychain.swift` (API keys per
+  host in the login Keychain) and `LogicSelfTest.swift` belong to it.
 - `AppDelegate.swift`: the status item and short menu (mode, cleanup engine, microphone, Settings…, Set Up…), sounds, and
   reacting to setting changes (hotkey, overlay, S1-mini server, model reload).
 - `AppSettings.swift`: every setting (`ObservableObject`, UserDefaults, the old keys), shared by the menu, the windows and `Dictation`.

@@ -170,7 +170,7 @@ struct SetupView: View {
             if settings.cleanupEngine == "s1" { settings.cleanupEngine = "claude" }
         } else if case .checking = claude.status {
             return
-        } else if ModelCatalog.s1Mini.isInstalled {
+        } else if ModelCatalog.s1Mini.isInstalled && settings.cleanupEngine != "openai" {
             settings.cleanupEngine = "s1"
         }
     }

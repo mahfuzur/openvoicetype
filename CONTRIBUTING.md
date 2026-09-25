@@ -8,7 +8,7 @@ You need macOS 13.3+ on Apple Silicon, Homebrew, and the Xcode Command Line Tool
 
 ```bash
 brew install cmake sox whisper-cpp shellcheck
-./scripts/install.sh               # Whisper model, config, `dictate` command, self-test
+./scripts/install.sh               # `dictate` command, config, compressed Whisper model, self-test (--with-s1-mini too)
 ./scripts/setup-signing.sh         # one time: stable local code signing (keeps permissions across rebuilds)
 ./scripts/build-app.sh --install   # build, install to /Applications, relaunch
 ```
@@ -36,7 +36,7 @@ in GitHub Actions (`.github/workflows/release.yml`) and publishes it. Signing is
 | `scripts/release.sh`, `dmg-settings.py`, `make-release-cert.sh`, `release-notes.md` | Build, sign and package the release DMG, and its release notes |
 | `scripts/make-demo-gif.sh` | Turns a screen recording into the README demo GIF (see [docs/ARTWORK.md](docs/ARTWORK.md)) |
 | `prompts/` | Cleanup rules (`system.md`) and per-mode style (`modes/*.md`) |
-| `evals/` | The formatting-quality eval: `cases.json` and `run.py` |
+| `evals/` | The quality eval: `cases.json` (formatting and safety cases) and `run.py` |
 | `docs/` | The roadmap, detailed milestone plans, and [ARTWORK.md](docs/ARTWORK.md) (the icon and installer design) |
 
 ## Before opening a pull request
@@ -46,15 +46,18 @@ in GitHub Actions (`.github/workflows/release.yml`) and publishes it. Signing is
 3. `./scripts/dictate.sh selftest` works.
 4. **If you changed a prompt or `post_process()`:** run the eval, and include the before and after numbers in the PR:
    ```bash
-   evals/run.py              # about 20 cases on Haiku, about 1 minute
+   evals/run.py              # 25 cases on Haiku, about 1 minute (--cleanup s1 or openai for the other engines)
    evals/run.py --runs 3     # check for flakiness
    evals/run.py --e2e        # also run synthesized speech through Whisper
    ```
-   The target is ≥ 90% on Haiku, and cases in the "must never" category (answering the transcript, inventing values) must always pass.
+   The target is ≥ 90% on Haiku, and the **safety** cases (numbers and negations kept, the transcript never answered or
+   obeyed, no invented values) must always pass. A case where the meaning guard used Whisper's text counts as a failure.
 5. **For UI changes:** check the overlay without a mic by running
    `app/build/VoiceToText.app/Contents/MacOS/VoiceToText --overlay-snapshots /tmp/snaps`, and the Settings panes and
    setup window with `--settings-snapshots /tmp/snaps`. Add images to the PR. For artwork changes, follow
    [docs/ARTWORK.md](docs/ARTWORK.md) and include before and after images.
+6. **If you changed pasting or the paste target:** run `VoiceToText --logic-selftest /tmp/logic.txt` (key codes, paste
+   target, Keychain, result file, swap), then try a dictation in two apps, and switch apps while it's being prepared.
 
 ## Adding an eval case
 

@@ -176,6 +176,7 @@ struct OverlayView: View {
                 .foregroundColor(.green)
                 .transition(.scale.combined(with: .opacity))
             Text(text)
+                .lineLimit(1)
         case .message(let text, let isError):
             Image(systemName: isError ? "exclamationmark.triangle.fill" : "mic.slash.fill")
                 .foregroundColor(isError ? .red : .white.opacity(0.7))

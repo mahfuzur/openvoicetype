@@ -12,12 +12,23 @@ final class HotKey {
 
         static let defaultCombo = Combo(keyCode: UInt32(kVK_Space), modifiers: UInt32(controlKey | optionKey),
                                         label: "⌃⌥Space")
+        /// Swaps the last paste between the cleaned text and Whisper's text.
+        static let defaultSwapCombo = Combo(keyCode: UInt32(kVK_ANSI_Z), modifiers: UInt32(controlKey | optionKey),
+                                            label: "⌃⌥Z")
 
-        /// The combo the Settings window recorded; migrates the older preset menu (`hotKeyIndex`).
+        /// A combo saved under `prefix` (e.g. "swapHotKey"), or `fallback`.
+        static func load(from defaults: UserDefaults, prefix: String, fallback: Combo) -> Combo {
+            guard let label = defaults.string(forKey: prefix + "Label"), defaults.object(forKey: prefix + "Code") != nil else {
+                return fallback
+            }
+            return Combo(keyCode: UInt32(defaults.integer(forKey: prefix + "Code")),
+                         modifiers: UInt32(defaults.integer(forKey: prefix + "Modifiers")), label: label)
+        }
+
+        /// The dictation combo the Settings window recorded; migrates the older preset menu (`hotKeyIndex`).
         static func load(from defaults: UserDefaults) -> Combo {
-            if let label = defaults.string(forKey: "hotKeyLabel"), defaults.object(forKey: "hotKeyCode") != nil {
-                return Combo(keyCode: UInt32(defaults.integer(forKey: "hotKeyCode")),
-                             modifiers: UInt32(defaults.integer(forKey: "hotKeyModifiers")), label: label)
+            if defaults.string(forKey: "hotKeyLabel") != nil, defaults.object(forKey: "hotKeyCode") != nil {
+                return load(from: defaults, prefix: "hotKey", fallback: defaultCombo)
             }
             let legacy = [
                 defaultCombo,
@@ -28,10 +39,10 @@ final class HotKey {
             return legacy[min(max(defaults.integer(forKey: "hotKeyIndex"), 0), legacy.count - 1)]
         }
 
-        func save(to defaults: UserDefaults) {
-            defaults.set(Int(keyCode), forKey: "hotKeyCode")
-            defaults.set(Int(modifiers), forKey: "hotKeyModifiers")
-            defaults.set(label, forKey: "hotKeyLabel")
+        func save(to defaults: UserDefaults, prefix: String = "hotKey") {
+            defaults.set(Int(keyCode), forKey: prefix + "Code")
+            defaults.set(Int(modifiers), forKey: prefix + "Modifiers")
+            defaults.set(label, forKey: prefix + "Label")
         }
 
         /// A combo from a key press in the hotkey recorder, or nil if it can't be a global hotkey. It needs ⌃ or ⌥
