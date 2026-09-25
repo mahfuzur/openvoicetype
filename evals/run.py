@@ -12,6 +12,11 @@ Usage:
 OpenAI-compatible endpoint in OPENAI_BASE_URL / OPENAI_MODEL (and OPENAI_API_KEY) from the environment.
 Cases have a category: formatting (the default) or safety (meaning kept, the transcript never obeyed). A case where the
 meaning guard pasted Whisper's text counts as a failure, so false alarms show up here.
+
+--command evaluates Command Mode instead (evals/command_cases.json: `dictate.sh command` with the selection in a command
+file and the spoken instruction on stdin), with the engine from --cleanup (claude or openai).
+--cold times the cleanup cases the way other apps call Claude: one plain `claude -p "<prompt>"` per dictation, cold, with
+no isolation flags. Compare its median with a normal run (which is also cold, but isolated).
 --e2e runs like the app: `refine` is started before the speech is synthesized (its Claude starts meanwhile), then the
 transcript from whisper-server is fed to it. --timing prints the median time of each stage after "recording stops".
 """
@@ -31,6 +36,7 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parent.parent
 SCRIPT = ROOT / "scripts" / "dictate.sh"
 CASES = ROOT / "evals" / "cases.json"
+COMMAND_CASES = ROOT / "evals" / "command_cases.json"
 RESULTS = ROOT / "evals" / "results"
 
 LIST_LINE = re.compile(r"^\s*(?:[-*•]|\d+[.)])\s+\S", re.MULTILINE)
@@ -84,6 +90,14 @@ def not_contains_pattern(term):
 
 def check(output, checks):
     failures = []
+    if "equals" in checks and output.strip() != checks["equals"]:
+        failures.append(f"want exactly {checks['equals']!r}")
+    if "max_chars" in checks and len(output) > checks["max_chars"]:
+        failures.append(f"{len(output)} characters, want <= {checks['max_chars']}")
+    if "max_sentences" in checks:
+        sentences = len(SENTENCE_END.findall(output))
+        if sentences > checks["max_sentences"]:
+            failures.append(f"{sentences} sentences, want <= {checks['max_sentences']}")
     for term in checks.get("contains", []):
         if term not in output:
             failures.append(f"missing {term!r}")
@@ -110,7 +124,49 @@ def check(output, checks):
     return failures
 
 
+def run_command_case(case, args, log_file):
+    env = case_env(case, args, log_file)
+    env["VTT_COMMAND_ENGINE"] = args.cleanup
+    env["COMMAND_TIMEOUT"] = "60"
+    job = {k: case[k] for k in ("target", "original", "current", "turns") if k in case}
+    started = time.time()
+    with tempfile.TemporaryDirectory() as directory:
+        command_file = Path(directory) / "command.json"
+        command_file.write_text(json.dumps(job))
+        env["VTT_COMMAND_FILE"] = str(command_file)
+        code, output = run_script(["command"], text=case["instruction"], env=env)
+    failures = check(output, case.get("checks", {}))
+    if code != 0:
+        failures.insert(0, "the command failed (nothing to paste)")
+    return {"id": case["id"], "mode": case.get("mode", "default"), "category": case.get("target", "selection"),
+            "raw": case["instruction"], "output": output, "seconds": round(time.time() - started, 2),
+            "failures": failures, "passed": not failures}
+
+
+def run_cold_case(case, args):
+    """The plain way to call Claude from another app: the whole prompt as one argument, no isolation, a cold start."""
+    mode = case.get("mode", "default")
+    prompt = (ROOT / "prompts" / "system.md").read_text()
+    mode_file = ROOT / "prompts" / "modes" / f"{mode}.md"
+    if mode_file.exists():
+        prompt += "\n\n" + mode_file.read_text()
+    message = f'<context app="{case.get("app", "")}" mode="{mode}"/>\n<transcript>\n{case["input"]}\n</transcript>'
+    started = time.time()
+    result = subprocess.run(["claude", "-p", "--model", args.model, prompt + "\n\n" + message],
+                            capture_output=True, text=True, cwd="/", timeout=90)
+    output = result.stdout.strip()
+    failures = check(output, case.get("checks", {}))
+    if result.returncode != 0:
+        failures.insert(0, "claude failed")
+    return {"id": case["id"], "mode": mode, "category": case.get("category", "formatting"), "raw": case["input"],
+            "output": output, "seconds": round(time.time() - started, 2), "failures": failures, "passed": not failures}
+
+
 def run_case(case, args, log_file):
+    if args.command:
+        return run_command_case(case, args, log_file)
+    if args.cold:
+        return run_cold_case(case, args)
     env = case_env(case, args, log_file)
     started = time.time()
     raw = case["input"]
@@ -155,9 +211,13 @@ def main():
     parser.add_argument("--jobs", type=int, default=0, help="parallel cases (default 4, or 2 with --e2e)")
     parser.add_argument("--show", action="store_true", help="print every output, not just failures")
     parser.add_argument("--timing", action="store_true", help="with --e2e: median time of each stage after stop")
+    parser.add_argument("--command", action="store_true", help="evaluate Command Mode (evals/command_cases.json)")
+    parser.add_argument("--cold", action="store_true", help="time a plain one-shot claude -p per case, for comparison")
     args = parser.parse_args()
+    if args.command and args.cleanup == "s1":
+        sys.exit("Command Mode needs an engine that follows instructions: --cleanup claude or openai")
 
-    cases = json.loads(CASES.read_text())
+    cases = json.loads((COMMAND_CASES if args.command else CASES).read_text())
     if args.case:
         cases = [c for c in cases if c["id"] in args.case]
     jobs = args.jobs or (2 if args.e2e else 4)
@@ -167,7 +227,7 @@ def main():
 
     RESULTS.mkdir(parents=True, exist_ok=True)
     stamp = datetime.now().strftime("%Y%m%d-%H%M%S")
-    label = f"{stamp}-{engine}{'-e2e' if args.e2e else ''}"
+    label = f"{stamp}-{engine}{'-e2e' if args.e2e else ''}{'-command' if args.command else ''}{'-cold' if args.cold else ''}"
     log_file = RESULTS / f"{label}.log"
 
     work = [case for case in cases for _ in range(args.runs)]

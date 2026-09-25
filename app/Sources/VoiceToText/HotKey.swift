@@ -15,6 +15,9 @@ final class HotKey {
         /// Swaps the last paste between the cleaned text and Whisper's text.
         static let defaultSwapCombo = Combo(keyCode: UInt32(kVK_ANSI_Z), modifiers: UInt32(controlKey | optionKey),
                                             label: "⌃⌥Z")
+        /// Command Mode: edit the selected text (or write at the cursor) by voice.
+        static let defaultCommandCombo = Combo(keyCode: UInt32(kVK_Space),
+                                               modifiers: UInt32(controlKey | optionKey | shiftKey), label: "⌃⌥⇧Space")
 
         /// A combo saved under `prefix` (e.g. "swapHotKey"), or `fallback`.
         static func load(from defaults: UserDefaults, prefix: String, fallback: Combo) -> Combo {

@@ -7,20 +7,25 @@ enum OverlaySnapshots {
     @MainActor
     static func render(to directory: URL) {
         try? FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
-        let phases: [(String, OverlayModel.Phase)] = [
-            ("0-connecting", .connecting("AirPods Pro")),
-            ("0-mic-test", .micTest("MacBook Pro Microphone")),
-            ("1-recording", .recording),
-            ("2-transcribing", .transcribing),
-            ("3-polishing", .polishing(offline: false)),
-            ("3-polishing-offline", .polishing(offline: true)),
-            ("4-success", .success("Pasted")),
-            ("5-no-speech", .message("No speech detected", isError: false)),
-            ("6-error", .message("Transcription failed", isError: true)),
+        let phases: [(String, OverlayModel.Phase, String?)] = [
+            ("0-connecting", .connecting("AirPods Pro"), nil),
+            ("0-mic-test", .micTest("MacBook Pro Microphone"), nil),
+            ("1-recording", .recording, nil),
+            ("2-transcribing", .transcribing, nil),
+            ("3-polishing", .polishing(offline: false), nil),
+            ("3-polishing-offline", .polishing(offline: true), nil),
+            ("4-success", .success("Pasted"), nil),
+            ("5-no-speech", .message("No speech detected", isError: false), nil),
+            ("6-error", .message("Transcription failed", isError: true), nil),
+            ("8-command-recording", .recording, "12 words selected"),
+            ("8-command-editing", .editing("Editing"), nil),
+            ("8-command-replaced", .success("Replaced · ⌘Z to undo"), nil),
+            ("8-command-copied", .message("Selection changed: result copied. Press ⌘V", isError: false), nil),
         ]
-        for (name, phase) in phases {
+        for (name, phase, chip) in phases {
             let model = OverlayModel()
             model.phase = phase
+            model.chip = chip
             model.recordingStartedAt = Date().addingTimeInterval(-7)
             model.levels = (0..<OverlayModel.barCount).map { CGFloat(abs(sin(Double($0) / 2.2))) * 0.9 }
             let view = OverlayView(model: model)
@@ -75,9 +80,9 @@ enum SettingsSnapshots {
     static func render(to directory: URL, actions: AppActions, lastResult: LastResult, done: @escaping () -> Void) {
         try? FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
         let views: [(String, AnyView, CGSize)] = [
-            ("settings-1-general", AnyView(GeneralPane(actions: actions)), CGSize(width: 600, height: 690)),
+            ("settings-1-general", AnyView(GeneralPane(actions: actions)), CGSize(width: 600, height: 720)),
             ("settings-2-speech", AnyView(SpeechPane()), CGSize(width: 600, height: 400)),
-            ("settings-3-cleanup", AnyView(CleanupPane(actions: actions)), CGSize(width: 600, height: 620)),
+            ("settings-3-cleanup", AnyView(CleanupPane(actions: actions)), CGSize(width: 600, height: 660)),
             ("settings-3b-cleanup-api", AnyView(Form { APIEndpointSection() }.formStyle(.grouped)),
              CGSize(width: 600, height: 340)),
             ("settings-4-dictionary", AnyView(DictionaryPane()), CGSize(width: 600, height: 540)),

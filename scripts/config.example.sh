@@ -36,6 +36,10 @@
 # OPENAI_API_KEY=""        # not needed for local servers; the app keeps it in the Keychain instead
 # OPENAI_TIMEOUT=15
 
+# Command Mode (edit selected text by voice): claude, or openai (the endpoint above). S1-mini can't follow instructions.
+# COMMAND_ENGINE="claude"
+# COMMAND_TIMEOUT=30       # seconds; rewriting a long selection takes longer than cleaning up a dictation
+
 # Offline cleanup with S1-mini by Superwhisper (English only; install.sh --with-s1-mini downloads it)
 # S1_FALLBACK="on"         # use S1-mini when the online engine is unavailable (offline, not logged in, error, timeout)
 # S1_MODEL="$HOME/.local/share/s1-mini/s1-mini-q4_k_m.gguf"

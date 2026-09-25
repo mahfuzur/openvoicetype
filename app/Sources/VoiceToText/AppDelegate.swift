@@ -10,6 +10,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     private var dictation: Dictation!
     private var hotKey: HotKey?
     private var swapKey: HotKey?
+    private var commandKey: HotKey?
+    /// The current Command Mode edit, for follow-ups and Restore Original (in memory only).
+    private var commandSession: CommandSession?
     private var escapeKey: HotKey?
     private var lastResult: String?
     private let history = DictationHistory()
@@ -31,6 +34,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     private var hotKeyLabel: String { settings.hotKey.label }
     /// When the hotkey went down in hold-to-talk mode.
     private var holdStartedAt: Date?
+    /// Which key is being held in hold-to-talk mode.
+    private var holdJob: Dictation.Job = .dictation
     /// Set when a hold-to-talk press was too short, so the overlay explains instead of saying "Cancelled".
     private var showHoldHint = false
 
@@ -133,7 +138,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         settings.$hotKey.dropFirst().removeDuplicates().sink { [weak self] _ in
             DispatchQueue.main.async { self?.registerHotKey() }
         }.store(in: &subscriptions)
-        settings.$swapHotKey.dropFirst().removeDuplicates().sink { [weak self] _ in
+        Publishers.CombineLatest(settings.$swapHotKey, settings.$commandHotKey).dropFirst().sink { [weak self] _ in
             DispatchQueue.main.async { self?.registerHotKey() }
         }.store(in: &subscriptions)
         settings.$isRecordingHotKey.dropFirst().removeDuplicates().sink { [weak self] recording in
@@ -141,6 +146,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
             if recording {
                 self?.hotKey = nil
                 self?.swapKey = nil
+                self?.commandKey = nil
             } else {
                 DispatchQueue.main.async { self?.registerHotKey() }
             }
@@ -288,21 +294,32 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
             DispatchQueue.main.asyncAfter(deadline: .now() + 0.3, execute: work)
         case .recording:
             play("Tink")
-            overlay.showRecording()
+            // Command Mode shows what it will act on; the selection is usually read by now.
+            overlay.showRecording(chip: dictation.job == .command ? dictation.commandPlan?.chip ?? "Reading the selection…" : nil)
         case .transcribing:
             play("Pop")
             overlay.show(.transcribing)
         case .polishing:
-            overlay.show(.polishing(offline: settings.usesS1))
+            if dictation.job == .command {
+                overlay.show(.editing(dictation.commandPlan?.workingLabel ?? "Editing"))
+            } else {
+                overlay.show(.polishing(offline: settings.usesS1))
+            }
         case .idle, .testingMic:
             break
         }
     }
 
     private func finished(_ outcome: Dictation.Outcome) {
+        // A command that ends without a result must not leave our last paste selected (the next keystroke would replace it).
+        if dictation.job == .command {
+            if case .command = outcome {} else { undoCommandSelection() }
+        }
         switch outcome {
         case .text(let result):
             deliver(result)
+        case .command(let result):
+            deliverCommand(result)
         case .noSpeech:
             AppLog.write("RESULT no-speech")
             play("Funk")
@@ -458,7 +475,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         hotKey = nil
         swapKey = nil
         guard !settings.isRecordingHotKey else { return }
-        hotKey = HotKey(settings.hotKey, onRelease: { [weak self] in self?.hotKeyReleased() }) { [weak self] in
+        hotKey = HotKey(settings.hotKey, onRelease: { [weak self] in self?.hotKeyReleased(.dictation) }) { [weak self] in
             self?.hotKeyPressed()
         }
         settings.hotKeyError = hotKey == nil ? "\(hotKeyLabel) is used by another app. Pick another." : nil
@@ -469,6 +486,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
             swapKey = HotKey(settings.swapHotKey) { [weak self] in self?.swapLastPaste() }
         }
         settings.swapHotKeyError = swapKey == nil ? "\(settings.swapHotKey.label) is taken. Pick another." : nil
+        commandKey = nil
+        if settings.commandHotKey != settings.hotKey && settings.commandHotKey != settings.swapHotKey {
+            commandKey = HotKey(settings.commandHotKey, onRelease: { [weak self] in self?.hotKeyReleased(.command) }) { [weak self] in
+                self?.hotKeyPressed(.command)
+            }
+        }
+        settings.commandHotKeyError = commandKey == nil ? "\(settings.commandHotKey.label) is taken. Pick another." : nil
     }
 
     /// No speech model yet (a new Mac before setup finished): open setup instead of failing to transcribe.
@@ -480,17 +504,145 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         return true
     }
 
-    private func hotKeyPressed() {
+    private func hotKeyPressed(_ job: Dictation.Job = .dictation) {
         guard !speechModelMissing() else { return }
-        guard settings.holdToTalk else { return dictation.toggle() }
+        if !settings.holdToTalk && dictation.state != .idle { return dictation.toggle() } // the second press stops
         guard dictation.state == .idle else { return }
-        holdStartedAt = Date()
-        dictation.start()
+        job == .command ? startCommand() : dictation.start()
+        // Hold to talk: only a start that happened waits for its key's release.
+        if settings.holdToTalk && dictation.state != .idle {
+            holdStartedAt = Date()
+            holdJob = job
+        }
+    }
+
+    // MARK: - Command Mode
+
+    /// Starts recording the instruction, and meanwhile reads the selection and decides what the command acts on
+    /// (the overlay's chip says it before you've finished speaking).
+    private func startCommand() {
+        if settings.commandEngine == "openai" && settings.openaiModel.trimmingCharacters(in: .whitespaces).isEmpty {
+            overlay.finish(.message("Set up the API for Command Mode in Settings → Cleanup", isError: false), after: 2.5)
+            return
+        }
+        let target = PasteTarget.capture()
+        dictation.start(.command)
+        guard dictation.job == .command, dictation.state != .idle else { return } // refused (a password field)
+        SelectionReader.read(target: target) { [weak self] selection in
+            guard let self, self.dictation.job == .command,
+                  [.starting, .recording, .transcribing].contains(self.dictation.state) else { return }
+            switch CommandPlanner.decide(selection: selection, target: target, session: self.commandSession,
+                                         lastDictation: self.history.last, reselect: PasteTarget.selectBeforeCursor) {
+            case .refuse(let message):
+                self.dictation.commandRefusal = message
+            case .plan(let plan):
+                self.dictation.commandPlan = plan
+                self.overlay.setChip(plan.chip)
+                AppLog.write("COMMAND start target=\(plan.target.rawValue) source=\(selection.source.rawValue) "
+                    + "selChars=\(plan.text.count) followUp=\(plan.isFollowUp) app=\"\(target.appName)\"")
+            }
+        }
+    }
+
+    /// Puts a command's result where it belongs: over the selection (if it's still selected), at the cursor, or on the
+    /// clipboard. Says what happened, including why nothing changed.
+    private func deliverCommand(_ result: Dictation.CommandResult) {
+        let plan = result.plan
+        let session = plan.session
+        let details = result.details
+        let engine = settings.commandEngine == "openai" ? "the API" : "Claude"
+        guard !result.failed else {
+            let message: String = switch details.error {
+            case "offline": "Command Mode needs \(engine): you're offline. Nothing changed"
+            case "auth": settings.commandEngine == "openai" ? "The API key was rejected. Nothing changed"
+                : "Command Mode needs Claude: sign in (Settings → Cleanup)"
+            case "config": "Set up the API in Settings → Cleanup"
+            case "limit", "auth-mismatch", "timeout":
+                (Dictation.problemDescription(details, engine: settings.commandEngine) ?? "\(engine) failed") + ". Nothing changed"
+            default: "Couldn't edit: nothing was changed"
+            }
+            AppLog.write("COMMAND failed target=\(plan.target.rawValue) error=\(details.error.isEmpty ? "empty" : details.error) "
+                + "ms=\(result.timing.cleanupMs)")
+            play("Basso")
+            undoCommandSelection(plan)
+            overlay.finish(.message(message, isError: true), after: 3.0)
+            return
+        }
+        let text = result.text
+        let html = richHTML(for: text, mode: result.context.mode)
+        var pasted = false
+        let label: String
+        let check = settings.autoPaste ? session.target.check() : .same
+        switch plan.target {
+        case .copy:
+            Paster.copy(text)
+            label = "Copied · " + Self.preview(text.components(separatedBy: .newlines).first ?? text, 40)
+        case .write, .selection, .lastDictation:
+            // A replace needs the same text still selected; Accessibility tells in most native apps.
+            // Web content often reports "" for the selected-text attribute, so there only the text markers count, and an
+            // app that says nothing is trusted.
+            let stillSelected = plan.expectedSelection.map { expected in
+                PasteTarget.currentSelection(markers: plan.source != .ax)
+                    .map { CommandPlanner.squeezed($0) == CommandPlanner.squeezed(expected) } ?? true
+            } ?? true
+            if check == .secure {
+                label = "Not pasted: a password field has focus (see Copy Last)"
+            } else if case .changed(let whereTo) = check {
+                Paster.copy(text, html: html)
+                label = "Copied: you switched to \(whereTo). Press ⌘V"
+            } else if !stillSelected {
+                Paster.copy(text, html: html)
+                label = "Selection changed: result copied. Press ⌘V"
+            } else {
+                pasted = Paster.paste(text, html: html, autoPaste: settings.autoPaste)
+                label = !pasted ? "Copied. Press ⌘V" : plan.target == .write ? "Written · ⌘Z to undo" : "Replaced · ⌘Z to undo"
+            }
+        }
+        if !pasted { undoCommandSelection(plan) }
+        // ⌃⌥Z swaps a dictation's last paste; after a command pasted, that paste is no longer the last one.
+        if pasted { history.invalidateLast() }
+        lastResult = text
+        session.instructions.append(result.instruction)
+        session.current = text
+        session.pastedLast = pasted
+        session.lastUsed = Date()
+        commandSession = session
+        AppLog.write("COMMAND \(pasted ? "pasted" : "copied") target=\(plan.target.rawValue) followUp=\(plan.isFollowUp) "
+            + "engine=\(details.engine) chars=\(text.count) check=\(checkLabel(check)) ms=\(result.timing.cleanupMs) "
+            + "total=\(Int(Date().timeIntervalSince(result.timing.stoppedAt) * 1000))")
+        overlay.finish(pasted ? .success(label) : .message(label, isError: false), after: pasted ? 1.4 : 3.0)
+    }
+
+    /// When the command had selected our last paste itself and nothing was pasted: put the cursor back where it was.
+    private func undoCommandSelection(_ plan: CommandPlan? = nil) {
+        guard let plan = plan ?? dictation.commandPlan, let cursor = plan.restoreCursor else { return }
+        PasteTarget.undoSelect(plan.text, cursor: cursor)
+    }
+
+    /// Menu → Restore Original Text: puts back the text from before the first edit of the current Command Mode session.
+    @objc private func restoreOriginal() {
+        guard dictation.state == .idle, let session = commandSession, session.canRestore, let current = session.current else { return }
+        let label: String
+        if session.pastedLast, settings.autoPaste, session.target.check() == .same, PasteTarget.selectBeforeCursor(current) != nil {
+            Paster.paste(session.original, html: nil, autoPaste: true)
+            label = "Restored the original text"
+        } else {
+            Paster.copy(session.original)
+            label = "Copied the original text. Press ⌘V"
+        }
+        AppLog.write("COMMAND restore-original")
+        commandSession = nil
+        overlay.finish(.success(label), after: 1.8)
+    }
+
+    @objc private func startCommandFromMenu() {
+        guard dictation.state == .idle else { return }
+        hotKeyPressed(.command)
     }
 
     /// Hold to talk: releasing the hotkey stops and pastes. A press under 0.3 s is treated as an accidental tap.
-    private func hotKeyReleased() {
-        guard settings.holdToTalk, let started = holdStartedAt else { return }
+    private func hotKeyReleased(_ job: Dictation.Job) {
+        guard settings.holdToTalk, let started = holdStartedAt, job == holdJob, dictation.job == job else { return }
         holdStartedAt = nil
         if Date().timeIntervalSince(started) < 0.3 {
             showHoldHint = true
@@ -512,9 +664,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         let status: String = switch dictation.state {
         case .idle: "Ready. \(hold ? "Hold" : "Press") \(hotKeyLabel) to dictate"
         case .starting: "Starting \(dictation.deviceName)…"
+        case .recording where dictation.job == .command:
+            "Listening for a command… \(hold ? "Release" : "Press") \(settings.commandHotKey.label) to finish, Esc to cancel"
         case .recording: "Recording… \(hold ? "Release" : "Press") \(hotKeyLabel) to finish, Esc to cancel"
         case .testingMic: "Testing \(dictation.deviceName)…"
         case .transcribing: "Transcribing…"
+        case .polishing where dictation.job == .command:
+            settings.commandEngine == "openai" ? "Editing with the API…" : "Editing with Claude…"
         case .polishing: settings.usesS1 ? "Polishing with S1-mini…" : settings.usesAPI ? "Polishing with the API…"
             : "Polishing with Claude…"
         }
@@ -528,7 +684,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         menu.addItem(.separator())
 
         switch dictation.state {
-        case .idle: menu.addItem(item("Start Dictation", #selector(toggleDictation)))
+        case .idle:
+            menu.addItem(item("Start Dictation", #selector(toggleDictation)))
+            let command = item("Edit Selection by Voice", #selector(startCommandFromMenu))
+            command.toolTip = "Command Mode (\(settings.commandHotKey.label)): select text, then say how to change it"
+            menu.addItem(command)
         case .starting: menu.addItem(item("Cancel", #selector(cancelDictation)))
         case .testingMic: menu.addItem(disabled("Testing microphone…"))
         case .recording:
@@ -546,6 +706,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
             menu.addItem(swap)
         }
         if !history.entries.isEmpty { menu.addItem(historyMenuItem()) }
+        if let session = commandSession, session.canRestore, dictation.state == .idle {
+            menu.addItem(item("Restore Original Text", #selector(restoreOriginal)))
+        }
 
         menu.addItem(.separator())
         menu.addItem(modeMenuItem())

@@ -44,6 +44,12 @@ OpenAI, Groq…) or fully offline with S1-mini.
   - Writes $15,400 · 15% · 2:30 PM · john.doe@gmail.com properly, and formats lists and paragraphs.
   - If a cleanup ever drops a number or a "not", Whisper's own text is pasted instead.
   - **⌃⌥Z** swaps the last paste between the cleaned text and Whisper's text.
+- **Command Mode (⌃⌥⇧Space):** select text, press it, and say how to change it: "make this shorter and more polite",
+  "turn this into bullet points", "translate to Spanish", "it's T-O-N-I". The selection is replaced, and ⌘Z brings it back.
+  - Follow up with "shorter still" or "go back to the original".
+  - With nothing selected, it edits what you just dictated, or writes new text at the cursor ("write a two-line thank-you
+    to the team").
+  - For text you can't edit (a web page, a PDF, a terminal), the answer goes to the clipboard.
 - **App-aware modes:** casual for chat, paragraphs for email, exact identifiers for code, lists for notes.
 - **Dictionary** for names and terms, a **floating indicator** (listening, transcribing, polishing, pasted), a microphone
   picker, and clear messages when something goes wrong ("Claude limit reached · resets 3:45 PM").
@@ -87,8 +93,8 @@ brew install cmake
 
 ## Using it
 
-**⌃⌥Space** starts and stops (or hold it while you speak), **Esc** cancels, and **⌃⌥Z** swaps the last paste. Everything
-else is in **Settings** (⌘, from the menu-bar icon). Modes, the dictionary, cleanup engines, the command line and
+**⌃⌥Space** starts and stops (or hold it while you speak), **Esc** cancels, **⌃⌥⇧Space** is Command Mode, and **⌃⌥Z**
+swaps the last paste. Everything else is in **Settings** (⌘, from the menu-bar icon). Modes, the dictionary, cleanup engines, the command line and
 troubleshooting are in the **[Guide](docs/GUIDE.md)**.
 
 ## How well it works
@@ -104,6 +110,14 @@ be carried out.
 | S1-mini (on this Mac, offline) | 8/17 | 7/8 | 0.7 s |
 | Ollama llama3.2, 3B (on this Mac) | 9/17 | 3/8 | 1.8 s |
 
+**Command Mode** has its own 20 cases (`evals/run.py --command`): edits, targeted changes, tone, lists, translation, a
+spelled-out name, Write, a copy-only summary, follow-ups, and instructions hidden in the selection. Claude Haiku passes
+19–20 of them (the flaky one: "shorter and more polite" sometimes comes out longer). A command takes about 3–4 s one-shot.
+
+**Compared with a plain `claude -p` call** (the way other apps use Claude Code: one call per dictation, no isolation,
+extended thinking on; `evals/run.py --cold`): a median of **10.9 s** per cleanup, and 22/25. OpenVoiceType's isolated call
+takes 3.7 s one-shot (25/25), and about 1.2 s when it's pre-started while you speak, as in the app.
+
 **From stop to text:** a median of **2.3 s** end to end on short sentences (Whisper about 1.1 s, Claude about 1.2 s;
 `evals/run.py --e2e --timing --jobs 1`). In real use, the app logs 2.7 s for 8 s of speech and 3.5–5.7 s for 17–22 s.
 
@@ -118,7 +132,8 @@ be carried out.
 
 - **Audio** is transcribed on your Mac and deleted straight away. It never leaves the Mac.
 - **Transcript text** goes only to the cleanup engine you pick:
-  - your own Claude Code (Anthropic's terms and your plan's limits apply: [docs/TERMS.md](docs/TERMS.md));
+  - your own Claude Code (Anthropic's terms and your plan's limits apply: [docs/TERMS.md](docs/TERMS.md)). Command Mode
+    sends the selected text and your instruction, only when you press its key;
   - an API endpoint you configure (a local Ollama or LM Studio keeps it on your Mac);
   - or nowhere, with S1-mini or cleanup off.
 - **No servers, telemetry or analytics.** The app never reads or stores your Claude login, keeps API keys in your Keychain,
@@ -130,7 +145,7 @@ be carried out.
 ## Contributing
 
 Contributions are welcome: see [CONTRIBUTING.md](CONTRIBUTING.md) for the setup and the eval workflow, and the
-[roadmap](docs/ROADMAP.md) for what's next (Command Mode: edit selected text by voice).
+[roadmap](docs/ROADMAP.md) for what's next (on-screen context, snippets, Apple's speech engine).
 
 ## Acknowledgements
 

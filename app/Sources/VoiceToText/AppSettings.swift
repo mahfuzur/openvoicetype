@@ -18,6 +18,11 @@ final class AppSettings: ObservableObject {
     /// Swaps the last paste between the cleaned text and Whisper's text (⌃⌥Z by default).
     @Published var swapHotKey: HotKey.Combo { didSet { swapHotKey.save(to: defaults, prefix: "swapHotKey") } }
     @Published var swapHotKeyError: String?
+    /// Command Mode: select text, press it, and say how to change it (⌃⌥⇧Space by default).
+    @Published var commandHotKey: HotKey.Combo { didSet { commandHotKey.save(to: defaults, prefix: "commandHotKey") } }
+    @Published var commandHotKeyError: String?
+    /// The engine Command Mode uses: "claude" (default) or "openai" (the API endpoint). Never S1-mini.
+    @Published var commandEngine: String { didSet { defaults.set(commandEngine, forKey: "commandEngine") } }
 
     @Published var refine: Bool { didSet { defaults.set(refine, forKey: "refine") } }
     @Published var claudeModel: String { didSet { defaults.set(claudeModel, forKey: "claudeModel") } }
@@ -65,6 +70,8 @@ final class AppSettings: ObservableObject {
         func bool(_ key: String, _ fallback: Bool) -> Bool { defaults.object(forKey: key) as? Bool ?? fallback }
         hotKey = HotKey.Combo.load(from: defaults)
         swapHotKey = HotKey.Combo.load(from: defaults, prefix: "swapHotKey", fallback: HotKey.Combo.defaultSwapCombo)
+        commandHotKey = HotKey.Combo.load(from: defaults, prefix: "commandHotKey", fallback: HotKey.Combo.defaultCommandCombo)
+        commandEngine = defaults.string(forKey: "commandEngine") ?? "claude"
         holdToTalk = defaults.bool(forKey: "holdToTalk")
         refine = bool("refine", true)
         claudeModel = defaults.string(forKey: "claudeModel") ?? "haiku"

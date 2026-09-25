@@ -49,6 +49,7 @@ in GitHub Actions (`.github/workflows/release.yml`) and publishes it. Signing is
    evals/run.py              # 25 cases on Haiku, about 1 minute (--cleanup s1 or openai for the other engines)
    evals/run.py --runs 3     # check for flakiness
    evals/run.py --e2e        # also run synthesized speech through Whisper
+   evals/run.py --command    # Command Mode: 20 cases (edits, follow-ups, Write, copy only, injections)
    ```
    The target is ≥ 90% on Haiku, and the **safety** cases (numbers and negations kept, the transcript never answered or
    obeyed, no invented values) must always pass. A case where the meaning guard used Whisper's text counts as a failure.

@@ -38,7 +38,7 @@ hotkey -> pin the paste target (app, window, title; refuse password fields) and 
   `ANTHROPIC_API_KEY`/`ANTHROPIC_AUTH_TOKEN` from them (unless `CLAUDE_USE_API_KEY=on`), so a user never pays API prices by
   accident. The only other LLM path is the OpenAI-compatible endpoint the user configures (M5.4).
 - Audio stays on the machine. Only the transcript text is sent, to the cleanup engine the user picked. Dictated text is not
-  logged unless `LOG_TEXT=on` (off by default since v0.3.0).
+  logged unless `LOG_TEXT=on` (off by default since v0.4.0).
 - Scripts launched from Shortcuts, launchd or a GUI app get a minimal `PATH`. Always prepend
   `/opt/homebrew/bin:$HOME/.local/bin`.
 
@@ -179,7 +179,7 @@ env -u ANTHROPIC_API_KEY -u ANTHROPIC_AUTH_TOKEN MAX_THINKING_TOKENS=0 CLAUDE_CO
 - `scripts/make-demo-gif.sh` makes `docs/images/demo.gif` (screen recording + ffmpeg); `scripts/release-notes.md` is the
   release body (`<version>` is filled in by `release.yml`).
 
-## Trust release (M5.4, v0.3.0, see docs/plans/M5.4-trust-release.md)
+## Trust release (M5.4, v0.4.0, see docs/plans/M5.4-trust-release.md)
 
 - **The result file.** `dictate.sh refine` writes JSON to `VTT_RESULT_FILE`:
   - its fields are `status`, `engine` (claude, openai, s1, none), `error` (limit, auth, auth-mismatch, offline, timeout,
@@ -237,6 +237,55 @@ env -u ANTHROPIC_API_KEY -u ANTHROPIC_AUTH_TOKEN MAX_THINKING_TOKENS=0 CLAUDE_CO
   counts, leading spinner glyphs and "— Edited".
 - `VoiceToText --logic-selftest <report>` checks the key codes, paste target, Keychain round trip, result file and swap
   logic without keystrokes.
+
+## Command Mode (M5.5, v0.5.0, see docs/plans/M5.5-command-mode-context-snippets.md)
+
+- **The key.** ⌃⌥⇧Space (`commandHotKey`) starts `Dictation.start(.command)`. The same recorder, Whisper, pre-start and
+  watchdog run as for a dictation, and Hold to Talk and Esc behave the same.
+- **Reading the selection.** `SelectionReader.read` runs off the main thread just after the press:
+  - AX first: `kAXSelectedTextAttribute`, then WebKit/Chromium `AXSelectedTextMarkerRange`.
+  - Then the app's Edit ▸ Copy pressed through AX: a disabled item means nothing is selected, with no beep. Failing that,
+    a ⌘C from a private source.
+  - Around a copy it saves the clipboard, writes a marker, waits on `changeCount` (0.3 s, or 0.5 s in Safari and Word),
+    then restores the clipboard.
+  - `looksLikeLineCopy` rejects the whole line that VS Code, JetBrains and others copy when nothing is selected.
+  - Before reading it calls `Paster.settlePending()`, so a dictation's pending clipboard restore runs first. It computes
+    the ⌘C key code on main (the TIS layout APIs are main-thread only).
+  - ⌘C waits up to 0.8 s for the hotkey's ⌃⌥⇧ to be released. If they're still held (hold to talk), the read is
+    `inconclusive` and the plan becomes copy-only, so nothing is pasted over a selection it couldn't see.
+  - The clipboard is always restored, and restored again if a slow app copies late.
+- **Choosing the target.** `CommandPlanner.decide` picks one:
+  - `selection`: replace it; over 6,000 characters is refused;
+  - a follow-up: the selection equals our last result, or with nothing selected our last result is selected again with
+    `PasteTarget.selectBeforeCursor`;
+  - `last_dictation`: the same, for the last dictation within 60 s;
+  - `write`: new text at the cursor;
+  - `copy`: terminals, read-only text, or no text field.
+  
+  The overlay's chip shows the target before you finish speaking. Before a replace, `PasteTarget.check()` and
+  `currentSelection(markers:)` must still match; otherwise the result is copied. Web content (`.axMarkers`) reads the text
+  markers, and "unknown" is trusted.
+- **Re-selecting is undoable.** `selectBeforeCursor` checks the text before the cursor first (exact, so a rich paste or
+  typing after it doesn't match) and changes nothing on a mismatch. When it selected something, the plan keeps
+  `restoreCursor`, and every outcome that doesn't paste (cancel, no speech, failure, a copy) puts the cursor back.
+- A command that pastes calls `history.invalidateLast()`, so ⌃⌥Z can't undo the command's paste thinking it's the dictation's.
+- **The script.** `dictate.sh command` runs with `JOB=command`, and `ONLINE_ENGINE=$COMMAND_ENGINE` (claude or openai,
+  never S1-mini, no offline fallback, no meaning guard).
+  - `system_prompt()` uses `prompts/command.md` plus the mode prompt. `user_message()` becomes `command_message()`: context
+    with the target, vocabulary, `<original>`, the `<previous_instruction>`s, `<current_text>` and `<instruction>`, built
+    from `VTT_COMMAND_FILE` (JSON). Tags inside the data are neutralized.
+  - `post_process` for a command applies only the dictionary and whitespace. It skips reflowing, the chat period rule,
+    email lower-casing and time normalization. It strips a preamble, fences or wrapping quotes only if the text given to
+    the model (`command_source`) didn't have them, and puts back the tags `command_message` neutralized (`&lt;` + exact tag
+    name).
+  - Exit 0 prints the text; exit 3 means nothing to paste (the reason is in the result file). `COMMAND_TIMEOUT` is 30 s,
+    and the app's watchdog allows 50 s.
+- **Sessions.** `CommandSession` (in memory) keeps the original, the instructions and the current result. Follow-ups work
+  for 60 s; Menu → Restore Original Text for 5 minutes.
+- **Logs.** `APP COMMAND start|pasted|copied|failed …` and `COMMAND target=…` lines never contain the text; the
+  instruction is logged only with `LOG_TEXT=on`.
+- **Eval.** `evals/run.py --command` runs the 20 cases in `evals/command_cases.json`. Check types include `equals`,
+  `max_chars` and `max_sentences`. `evals/run.py --cold` times a plain one-shot `claude -p`, for comparison.
 
 ## Commands
 
@@ -296,7 +345,8 @@ The menu-bar app (`app/Sources/VoiceToText/`) records in-process and runs `dicta
   `OK device=… ready=… peak=… wavBytes=…`. Launch it with `open` so the app's own mic permission applies.
 - `Paster.swift`: saves the whole clipboard, pastes with a CGEvent Cmd+V (needs Accessibility), then restores the clipboard
   (details in the trust release section). `PasteTarget.swift`, `DictationHistory.swift`, `APIKeychain.swift` (API keys per
-  host in the login Keychain) and `LogicSelfTest.swift` belong to it.
+  host in the login Keychain) and `LogicSelfTest.swift` belong to it. Command Mode is `SelectionReader.swift` and
+  `CommandMode.swift` (planner, session, plan).
 - `AppDelegate.swift`: the status item and short menu (mode, cleanup engine, microphone, Settings…, Set Up…), sounds, and
   reacting to setting changes (hotkey, overlay, S1-mini server, model reload).
 - `AppSettings.swift`: every setting (`ObservableObject`, UserDefaults, the old keys), shared by the menu, the windows and `Dictation`.

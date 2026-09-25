@@ -1,6 +1,29 @@
 # Changelog
 
-## 0.3.0 (unreleased)
+## 0.5.0 (unreleased)
+
+**Command Mode: edit text by voice.** Select text, press **⌃⌥⇧Space**, and say how to change it.
+
+- **Edit:** "make this shorter and more polite", "turn this into bullet points", "change 5 PM to 6 PM", "translate to
+  Spanish", "it's T-O-N-I". The answer replaces the selection, and ⌘Z brings the original back.
+- **Follow-ups:** "shorter still", "no, keep the first sentence", "go back to the original". Press the key again within a
+  minute (or select the result again). **Menu → Restore Original Text** puts back the text from before the first edit.
+- **Nothing selected:** it edits what you just dictated ("make that Thursday"), or writes new text at the cursor ("write a
+  two-line thank-you to the team").
+- **Text you can't edit** (a web page, a PDF, a terminal): the answer goes to the clipboard.
+- **Before you speak, the overlay says what the command will act on** ("12 words selected", "Last dictation", "Write at
+  cursor", "Copy only"). Every failure says what happened, and nothing is changed: "Selection changed: result copied",
+  "Command Mode needs Claude: you're offline", "Selection too long".
+- **Reading the selection:** Accessibility first, then the app's own Edit ▸ Copy (no beep), then ⌘C, with your clipboard
+  put back. Code editors that copy the whole line when nothing is selected don't fool it.
+- Uses Claude, or the API (Settings → Cleanup → **Command Mode uses**). The shortcut is in Settings → General. Also in the
+  menu: **Edit Selection by Voice**.
+- The eval has 20 Command Mode cases (`evals/run.py --command`), and `--cold` times a plain one-shot `claude -p` for
+  comparison.
+
+## 0.4.0 (2026-09-25)
+
+Planned as 0.3.0.
 
 **The trust release.** Fixes from an outside review of 0.2.0, before new features.
 
