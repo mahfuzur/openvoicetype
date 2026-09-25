@@ -6,6 +6,10 @@ release under the new name (v0.2.0) moves existing users over without losing the
 
 **Status legend:** ☐ to do · ◐ in progress · ☑ done
 
+**Status: ☑ Done. v0.2.0 was released on 2026-09-25** ([release](https://github.com/mahfuzur/openvoicetype/releases/tag/v0.2.0)).
+Deferred: the demo GIF. Still to do: the second-Mac install test (M4.11) and, optionally, asking Anthropic about the terms.
+These are tracked in the roadmap's "Open items".
+
 ## 1. Scope decisions (2026-09-24)
 
 | Question | Decision |
@@ -25,8 +29,8 @@ release under the new name (v0.2.0) moves existing users over without losing the
 | Public repo, CI, release workflow | ☑ `ci.yml` (lint, build, helper check, snapshots) and `release.yml` (DMG from a `v*` tag); v0.1.0 and v0.1.1 published |
 | Distribution | ☑ DMG from M4, self-signed release certificate, update check |
 | Toolchain | ☑ Settled in M4: Command Line Tools only, locally and in CI (the `macos-14` runner). Installing Xcode isn't needed |
-| Docs | ◐ README (privacy section, troubleshooting), CONTRIBUTING, CHANGELOG, a bug-report template. Missing: the demo GIF, a feature-request template, a PR template and SECURITY.md |
-| Personal paths | ◐ The repo is clean apart from `install.sh`, which links Superwhisper's model folder (against the project rule "never hardcode another app's model folder") |
+| Docs | ◐ README (privacy section, troubleshooting), CONTRIBUTING, CHANGELOG, a bug-report template. Missing: the demo GIF, a feature-request template, a PR template and SECURITY.md (all but the GIF added in R6) |
+| Personal paths | ◐ The repo is clean apart from `install.sh`, which links Superwhisper's model folder (against the project rule "never hardcode another app's model folder"; fixed in R7) |
 | Second-Mac install test (M4.11) | ☐ Needs a real second Mac; stays with the maintainer (§7) |
 
 ## 3. The terms check (2026-09-24)
@@ -122,7 +126,7 @@ confirmation (§7).
 | R7 | `install.sh` without the Superwhisper link | ☑ |
 | R8 | Docs: README, CONTRIBUTING, CLAUDE.md, ARTWORK.md, ROADMAP, CHANGELOG 0.2.0 | ☑ Plus `scripts/release-notes.md` for the GitHub release body |
 | R9 | Checks: shellcheck, app build, `--settings-snapshots`, `--overlay-snapshots`, self-test, migration test | ☑ All pass; the self-test ran with its own state directory and ports |
-| R10 | Maintainer: record the GIF, rename the repo, update its description and topics, tag v0.2.0, test on a second Mac (§7) | ☐ |
+| R10 | Maintainer: record the GIF, rename the repo, update its description and topics, tag v0.2.0, test on a second Mac (§7) | ◐ Repo renamed, description, topics and private vulnerability reporting set, v0.2.0 released (2026-09-25). The GIF is deferred; the second-Mac test is still to do |
 
 ## 6. Acceptance criteria
 
@@ -132,7 +136,7 @@ confirmation (§7).
 - On a Mac with v0.1.x settings, the first launch keeps the hotkey, models and modes, offers to trash the old app, and
   after the two permission grants, dictation works.
 - `docs/TERMS.md` exists and is linked from the README, About and Cleanup; no text promises "no limits".
-- `scripts/make-demo-gif.sh` produces a GIF under 5 MB from a 15 s recording.
+- `scripts/make-demo-gif.sh` produces a GIF under 5 MB from a 15 s recording. (Conversion tested; the GIF itself is deferred.)
 - shellcheck, the build and the self-test pass, with no new warnings.
 
 ## 7. Publishing steps (for the maintainer, after review)
@@ -140,18 +144,20 @@ confirmation (§7).
 1. ☑ (2026-09-24) **Try the migration yourself** on this Mac: `./scripts/build-app.sh --install` installs `/Applications/OpenVoiceType.app`
    next to the old app. On its first launch it should keep your settings, offer to trash Voice to Text, then ask for
    Microphone and Accessibility.
-2. Merge the PR, then rename the repo (GitHub keeps redirecting the old URL, so v0.1.x update checks still work):
+2. ☑ (2026-09-24) Merge the PR, then rename the repo (GitHub keeps redirecting the old URL, so v0.1.x update checks still work):
    `gh repo rename openvoicetype`
-3. Description, topics and private security reports:
+3. ☑ (2026-09-25) Description, topics and private security reports:
    `gh repo edit --description "Free, open-source macOS dictation: on-device Whisper, polished by your own Claude Code CLI. No API keys." --add-topic macos --add-topic menu-bar-app --add-topic claude-code --add-topic whisper-cpp`
    and `gh api -X PUT repos/mahfuzur/openvoicetype/private-vulnerability-reporting` (the SECURITY.md link needs it).
 4. ☑ (2026-09-24) Screenshots: open `dist/OpenVoiceType-0.2.0.dmg` (`./scripts/release.sh v0.2.0`), press ⌘⇧4, then Space, and click the
    window. Save it as `docs/images/dmg-window.png`.
-5. Record the GIF (`scripts/make-demo-gif.sh`, see docs/ARTWORK.md), uncomment its line in the README, and commit.
-6. Change the CHANGELOG heading to the release date, then tag and publish: `git tag v0.2.0 && git push origin v0.2.0`
+5. Deferred (2026-09-25): record the GIF (`scripts/make-demo-gif.sh`, see docs/ARTWORK.md), uncomment its line in the README,
+   and commit. The first try failed with `screencapture: capture error`: the terminal's app had no Screen Recording
+   permission. Grant it and relaunch that app, or record with ⌘⇧5 and convert with `--from`.
+6. ☑ (2026-09-25) Change the CHANGELOG heading to the release date, then tag and publish: `git tag v0.2.0 && git push origin v0.2.0`
    (`release.yml` builds the DMG and uses `scripts/release-notes.md` as the release text).
-7. Install the published DMG on a second Mac without Homebrew or Claude (M4.11).
-8. Optional: ask Anthropic ([contact](https://www.anthropic.com/contact-sales)) to confirm that a free, local app starting the
+7. ☐ Install the published DMG on a second Mac without Homebrew or Claude (M4.11).
+8. ☐ Optional: ask Anthropic ([contact](https://www.anthropic.com/contact-sales)) to confirm that a free, local app starting the
    user's own Claude Code CLI is fine with a subscription.
 
 ## 8. Risks

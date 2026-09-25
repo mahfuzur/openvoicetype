@@ -34,8 +34,13 @@ else
   done
   echo "Recording for $SECONDS_TO_RECORD s: dictate now.        "
   # -v video, -V length, -C shows the cursor; -x no sound effects.
-  screencapture -x -v -C -V "$SECONDS_TO_RECORD" "${region[@]+"${region[@]}"}" "$VIDEO"
-  [[ -s "$VIDEO" ]] || { echo "Nothing was recorded: grant Screen Recording to your terminal and try again." >&2; exit 1; }
+  # Without Screen Recording permission it fails with "capture error": don't let set -e hide the hint below.
+  screencapture -x -v -C -V "$SECONDS_TO_RECORD" "${region[@]+"${region[@]}"}" "$VIDEO" || true
+  [[ -s "$VIDEO" ]] || {
+    echo "Nothing was recorded: grant Screen Recording to the app this terminal runs in (Terminal, iTerm, VS Code…)," >&2
+    echo "quit and reopen it, then try again. Or record with ⌘⇧5 and use --from <video.mov>." >&2
+    exit 1
+  }
 fi
 
 # Two passes: build a palette from the whole clip, then map every frame to it. Much sharper and smaller than one pass.

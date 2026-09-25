@@ -14,7 +14,7 @@ through its CLI, with no API keys. Local models and API keys are options too.
   and every run is logged.
 - `app/`: a menu-bar app. Carbon hotkey (⌃⌥Space, changeable), Esc to cancel, and menu settings
   (Claude on/off, Haiku/Sonnet, auto-paste, launch at login). It pastes itself and restores the whole clipboard. It runs `dictate.sh` for the pipeline.
-- It works in daily use. Real timings: whisper 2–4 s, claude 4–8 s, **total 6–10 s**.
+- It works in daily use. Real timings then: whisper 2–4 s, claude 4–8 s, **total 6–10 s** (2.7–5.7 s since M3).
 
 **Done: M1 overlay (2026-09-23):** recording moved into Swift (`AVAudioEngine`, with live levels). The script is split into
 `transcribe` and `refine` stages. There's a floating pill with a live waveform and timer, then Transcribing, Polishing, and Pasted,
@@ -45,10 +45,10 @@ post-processing, rich paste, and the eval harness (`evals/`). Eval: 30% → **10
 |---|---|---|---|---|
 | M1 | Floating overlay with animations | 1–2 days | ✅ Done (2026-09-23) | You can see when it's listening and working |
 | M2 | Formatting quality | 2 days | ✅ Done (2026-09-23) | Lists, paragraphs, spoken commands, app-aware style |
-| M2.5 | Offline cleanup with S1-mini | 1–2 days | ✅ Done (2026-09-24) | Works with no internet; a fully on-device option |
+| M2.5 | Offline cleanup with S1-mini | 1–2 days | ✅ Done (2026-09-24); a real internet-off test in the app is still to do (see [Open items](#open-items)) | Works with no internet; a fully on-device option |
 | M3 | Native pipeline and speed | 3–4 days | ✅ Done (2026-09-24): about 2× faster; ≤ 3 s for short dictations | Around 2–3 s total, needed before a public release |
 | M4 | Settings window, first-run setup and DMG | 7–9 days | ✅ Released as v0.1.0 (2026-09-24); a test on a second Mac is still to do ([plan](plans/M4-app-and-install.md)) | Anyone can install it from a DMG with no Homebrew or Terminal, and set it up in a real window |
-| M5 | Open-source release | 2–3 days | ◐ Built on the `m5-release` branch (2026-09-24): renamed to **OpenVoiceType**, terms check, demo GIF script, community files. Left for the maintainer: record the GIF, rename the repo, tag v0.2.0 ([plan](plans/M5-open-source-release.md)) | Name, terms check, demo, the first tagged DMG |
+| M5 | Open-source release | 2–3 days | ✅ Released as v0.2.0 (2026-09-25): renamed to **OpenVoiceType**, terms check, community files, repo renamed. The demo GIF is deferred ([plan](plans/M5-open-source-release.md)) | Name, terms check, demo, the first tagged DMG |
 | M6 | More providers | 3–4 days | Not started | Turns it into a platform: pick Codex, Gemini, Ollama or an API as well as Claude and S1-mini |
 
 M3 matters most for adoption: people don't keep using a slow dictation tool.
@@ -142,7 +142,8 @@ Whisper is already local, so with S1-mini the whole pipeline runs on the Mac.
 | S1-mini | Always S1-mini, fully offline. Raw text if it fails. |
 | Off / raw mode | No cleanup, as today. |
 
-**Runtime:** llama.cpp from Homebrew (`brew install llama.cpp`), the runtime the S1-mini authors document. Ollama was
+**Runtime:** llama.cpp, the runtime the S1-mini authors document. The app bundles its own static `llama-server` (M4); the
+CLI uses Homebrew's (`brew install llama.cpp`). Ollama was
 considered: same speed (it's built on llama.cpp), but S1-mini isn't in its library, it needs a custom Modelfile to get the
 prompt format right, and every user would have to install a separate app.
 
@@ -216,7 +217,8 @@ Target: **≤ 3 s** from stopping to pasted text, for 15 s of speech (**≤ 1.5 
 
 - A persistent multi-dictation Claude session was just as fast, but kept every earlier transcript in its history, so it was rejected.
 - **Push-to-talk** (Carbon key release) alongside toggle mode, plus an `APP TIMING` log line per dictation.
-- The bash pipeline stays: both wins come from keeping processes warm. The Swift `Transcriber`/`Refiner` protocols move to M4.
+- The bash pipeline stays: both wins come from keeping processes warm. The Swift `Transcriber`/`Refiner` protocols weren't needed in M3 or M4;
+  a `Refiner` protocol comes with M6.
 
 ## M4: Settings window, first-run setup and DMG
 
@@ -252,16 +254,17 @@ The original idea for the settings window (the plan has the final list):
 
 Installed CLIs are detected automatically by resolving the user's login-shell `PATH` (`zsh -lc 'command -v claude'`).
 
-## M5: Open-source release
+## M5: Open-source release ✅ Done
 
 > **Detailed plan and task tracking:** [plans/M5-open-source-release.md](plans/M5-open-source-release.md).
 > Decided on 2026-09-24: the new name is **OpenVoiceType**; Claude's terms are disclosed in `docs/TERMS.md` and the wording is softer.
+> **Released as v0.2.0 on 2026-09-25.** The demo GIF is deferred (see [Open items](#open-items)).
 
 - **Name and IDs:** choose a unique name ("Voice to Text" is too generic to find) and check GitHub, the App Store and trademarks.
   Use the bundle ID `io.github.<user>.<name>`, and remove personal paths, e-mail addresses and the Superwhisper model path.
 - **License:** MIT (my recommendation, the most permissive) or GPL-3 (like VoiceInk). Don't copy code from GPL projects into an MIT repo.
-- **Toolchain:** install Xcode locally, because contributors and CI expect it. GitHub Actions on a macOS runner builds, tests
-  and attaches the `.app` to each release.
+- **Toolchain:** ~~install Xcode locally~~. Settled in M4: Command Line Tools are enough, locally and in CI. GitHub Actions on
+  a macOS runner builds, tests and attaches the DMG to each release.
 - **Distribution:** the DMG and release workflow are built in M4. A **signed and notarized** DMG needs the Apple Developer
   Program ($99 a year); without it, users click Open Anyway once, and a self-signed release certificate keeps permission grants
   across updates (see the M4 plan).
@@ -299,15 +302,27 @@ These are the two features, from comparing with Wispr Flow and Typeless, that ar
 1. ~~Overlay style~~: a bottom-centre pill (done in M1).
 2. ~~Name and license~~: **MIT**. The name was **Voice to Text** (`io.github.mahfuzur.voicetotext`) until M5 renamed it to
    **OpenVoiceType** (`io.github.mahfuzur.openvoicetype`) on 2026-09-24: the old name was too generic to find.
-3. **Apple Developer account** ($99 a year) for signed and notarized releases: still open. Until then, releases are built from source.
+3. **Apple Developer account** ($99 a year) for signed and notarized releases: still open. Until then, releases are signed with the self-signed release
+   certificate, and users click Open Anyway once.
 4. ~~Offline cleanup~~: **S1-mini** through llama.cpp. Claude stays the default; S1-mini is the automatic fallback and a selectable option (2026-09-24).
+
+## Open items
+
+What's left from finished milestones, and what was moved to later (checked against the code and `dictate.log` on 2026-09-25):
+
+| # | Item | From | Notes |
+|---|---|---|---|
+| 1 | Real internet-off test in the app | M2.5 | Its "Done when" hasn't been met yet: none of the 61 app dictations in the log used the offline fallback (`APP RESULT … offlineFallback=true`). Test in Notes, Slack or Mail, not in code mode |
+| 2 | Install the published DMG on a second Mac without Homebrew or Claude | M4.11, M5 §7.7 | Also finishes spikes S2 and S3 (Open Anyway on a real download, an update keeping the permissions), and runs the Claude Install and Sign In buttons (M4.7) and first-run setup (M4.8) on a clean Mac |
+| 3 | Demo GIF for the README | M5 §7.5 | Deferred. `screencapture` needs Screen Recording for the terminal's app; or record with ⌘⇧5 and run `scripts/make-demo-gif.sh --from` |
+| 4 | Optional: ask Anthropic to confirm the terms | M5 §7.8 | |
+| 5 | ≤ 3 s for 15–20 s dictations | M3 | Now 3.5–5.7 s; the time left is Claude generating the text. Ideas in [plans/M3-speed.md](plans/M3-speed.md) §8 |
+| 6 | Model download resume on a real dropped connection | M4.6 | Tested only without a dropped connection |
+| 7 | Apple Developer account for notarized releases | Decision 3 | `release.sh` already notarizes when the credentials are set |
+| 8 | Later: History pane, editing mode prompts, a cleanup timeout setting, Sparkle updates, a Homebrew cask | M4 | Moved out of M4's scope |
 
 ## Next step
 
-M3 is done (see [plans/M3-speed.md](plans/M3-speed.md)): about twice as fast. Real dictations take 2.7 s (8 s of speech) to
-3.5–5.7 s (17–22 s of speech), from 6–9 s before; S1-mini takes about 1.5 s. What's left is Claude generating the text; the
-plan lists ideas for later. M4 is done and **v0.1.0 is released** (2026-09-24): a self-contained app and DMG, first-run setup, a Settings window, the
-release workflow, and the artwork ([plans/M4-app-and-install.md](plans/M4-app-and-install.md)). Next: install the published DMG
-on a second Mac without Homebrew or Claude. M5 is built on the `m5-release` branch: after review, the maintainer records the
-demo GIF, renames the repo and tags v0.2.0 (the steps are in [plans/M5-open-source-release.md](plans/M5-open-source-release.md) §7).
-Then M6 (more providers).
+M1–M5 are done: **v0.2.0 is released** under the new name (2026-09-25). Real dictations take 2.7 s (8 s of speech) to
+3.5–5.7 s (17–22 s of speech) with Claude, about 1.5 s with S1-mini. Next: the open items above (the offline test and the
+second-Mac install first), then M6 (more providers).
