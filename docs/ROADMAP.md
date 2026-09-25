@@ -49,6 +49,8 @@ post-processing, rich paste, and the eval harness (`evals/`). Eval: 30% → **10
 | M3 | Native pipeline and speed | 3–4 days | ✅ Done (2026-09-24): about 2× faster; ≤ 3 s for short dictations | Around 2–3 s total, needed before a public release |
 | M4 | Settings window, first-run setup and DMG | 7–9 days | ✅ Released as v0.1.0 (2026-09-24); a test on a second Mac is still to do ([plan](plans/M4-app-and-install.md)) | Anyone can install it from a DMG with no Homebrew or Terminal, and set it up in a real window |
 | M5 | Open-source release | 2–3 days | ✅ Released as v0.2.0 (2026-09-25): renamed to **OpenVoiceType**, terms check, community files, repo renamed. The demo GIF is deferred ([plan](plans/M5-open-source-release.md)) | Name, terms check, demo, the first tagged DMG |
+| M5.4 | Trust release (v0.3.0) | 7–9 days | ◐ In progress (2026-09-25) ([plan](plans/M5.4-trust-release.md)) | From an outside review: private logs, safe pasting, a guard for changed numbers and "not", an isolated Claude call with clear errors, and an OpenAI-compatible provider so cleanup doesn't depend on Claude alone |
+| M5.5 | Command Mode, on-screen context and snippets | 11–14 days | ☐ Planned (2026-09-25) ([plan](plans/M5.5-command-mode-context-snippets.md), [research](research/2026-09-25-command-mode-and-cli.md)) | Closes the biggest gap: editing the selection by voice. v0.4.0 = Command Mode; v0.5.0 = context, snippets and Apple's on-device speech engine (macOS 26) |
 | M6 | More providers | 3–4 days | Not started | Turns it into a platform: pick Codex, Gemini, Ollama or an API as well as Claude and S1-mini |
 
 M3 matters most for adoption: people don't keep using a slow dictation tool.
@@ -246,8 +248,9 @@ The original idea for the settings window (the plan has the final list):
 |---|---|---|---|
 | Claude Code CLI | `claude -p` | The user's Claude subscription | Current implementation |
 | S1-mini | Local `llama-server` | None | M2.5; the offline fallback |
-| OpenAI Codex CLI | `codex exec` | The user's ChatGPT subscription | Flags need checking |
-| Gemini CLI | `gemini -p` | Google account | Flags need checking |
+| OpenAI Codex CLI | `codex app-server` (pre-started; `codex exec` one-shot) | The user's ChatGPT plan | **The first M6 provider**: OpenAI documents using it in other apps. Flags in the [research](research/2026-09-25-command-mode-and-cli.md) §4 |
+| GitHub Copilot CLI | `copilot -p` | The user's Copilot plan | Documented for third-party tools; inputs are used for training unless the user opts out |
+| Gemini CLI | `gemini -p` | **API key only** | Google ended personal-account login on 2026-06-18, and Antigravity's terms forbid third-party tools |
 | Ollama / LM Studio | Local HTTP | None | Fully offline; fast with small models |
 | OpenAI-compatible API | HTTPS | API key stored in Keychain | OpenAI, Anthropic API, OpenRouter, Groq |
 | None | Raw Whisper text | None | Fastest option |
@@ -284,16 +287,25 @@ Installed CLIs are detected automatically by resolving the user's login-shell `P
 | Permission grants lost on rebuild (ad-hoc signing) | Developer ID signing before release; a re-grant helper in onboarding |
 | The transcript is read as an instruction | Transcript tags, a strict system prompt, tools disabled (already done), plus eval cases |
 
-## Proposed: Command Mode and on-screen context
+## M5.5: Command Mode, on-screen context and snippets
 
-These are the two features, from comparing with Wispr Flow and Typeless, that are worth copying (researched 2026-09-23):
+> **Detailed plan and task tracking:** [plans/M5.5-command-mode-context-snippets.md](plans/M5.5-command-mode-context-snippets.md).
+> Deep research (2026-09-25): [research/2026-09-25-command-mode-and-cli.md](research/2026-09-25-command-mode-and-cli.md).
 
-- **Command Mode:** select text, press a second hotkey, and speak an instruction ("make this more polite",
-  "turn this into bullet points", "translate to Bengali"). Claude rewrites the selection in place. This uses a separate
-  prompt in which instructions *are* followed. It reads the selection through Accessibility (`AXSelectedText`), falling back to a copy.
-- **On-screen context:** send the window title and the text around the cursor (recipients, channel names) as spelling hints.
-  It's opt-in per app, because this extra text also goes to Claude.
-- **Small additions:** snippets (a spoken trigger inserts a saved text) and a Translate mode.
+- **Our selling point, re-checked:** at least 10 dictation apps now use the user's own CLI (VoiceInk since April 2026), but all of
+  them start it cold for each dictation. Our lead is the pre-started Claude and its isolation, so v0.3.0 hardens it first
+  (`--safe-mode`, clear "limit reached" messages, a guard against an exported API key, safer pasting) and publishes the numbers.
+- **Command Mode:** its own hotkey (⌃⌥⇧Space). With text selected, speak an instruction ("make this more polite") and Claude
+  rewrites the selection in place, with ⌘Z, follow-ups ("shorter still") and Restore Original. With nothing selected, it edits
+  the last dictation or writes new text at the cursor. Read-only text and terminals get the answer on the clipboard. Every
+  failure says what happened. Claude only.
+- **On-screen context:** opt-in. The window title and the text around the cursor, read through Accessibility, as spelling hints.
+  No screenshots.
+- **Snippets:** a spoken trigger inserts saved text, alone (no Claude call) or inside a sentence.
+- **Small additions:** website modes from the browser's window title, smart spacing, and "send it" in chat apps.
+- **Apple speech engine (macOS 26):** Apple's on-device SpeechAnalyzer as an alternative to Whisper, for Macs with little memory.
+  Audio still stays on the Mac. Built behind a compiler check, so older SDKs keep building. Claude can't do speech
+  recognition (it takes no audio).
 - **Not planned:** a custom speech recognizer or fine-tuned LLM (these need GPU servers), learning a personal writing style,
   and a dictionary that learns from your edits (reading text fields back after pasting is fragile).
 
@@ -302,8 +314,9 @@ These are the two features, from comparing with Wispr Flow and Typeless, that ar
 1. ~~Overlay style~~: a bottom-centre pill (done in M1).
 2. ~~Name and license~~: **MIT**. The name was **Voice to Text** (`io.github.mahfuzur.voicetotext`) until M5 renamed it to
    **OpenVoiceType** (`io.github.mahfuzur.openvoicetype`) on 2026-09-24: the old name was too generic to find.
-3. **Apple Developer account** ($99 a year) for signed and notarized releases: still open. Until then, releases are signed with the self-signed release
-   certificate, and users click Open Anyway once.
+3. **Apple Developer account** ($99 a year) for signed and notarized releases: **not for now** (decided 2026-09-25). Releases are
+   signed with the self-signed release certificate, and users click Open Anyway once. `release.sh` notarizes as soon as the
+   credentials exist.
 4. ~~Offline cleanup~~: **S1-mini** through llama.cpp. Claude stays the default; S1-mini is the automatic fallback and a selectable option (2026-09-24).
 
 ## Open items
@@ -325,4 +338,5 @@ What's left from finished milestones, and what was moved to later (checked again
 
 M1–M5 are done: **v0.2.0 is released** under the new name (2026-09-25). Real dictations take 2.7 s (8 s of speech) to
 3.5–5.7 s (17–22 s of speech) with Claude, about 1.5 s with S1-mini. Next: the open items above (the offline test and the
-second-Mac install first), then M6 (more providers).
+second-Mac install first), then M5.4 (the trust release, v0.3.0), M5.5 (Command Mode, context and snippets), then M6 (more
+providers).
