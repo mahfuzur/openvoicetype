@@ -10,11 +10,14 @@
 #   selftest    synthesize speech with `say`, run the pipeline, print timings (no paste)
 #   transcribe  print the raw transcript of a WAV (empty if no speech)        [used by the app]
 #   refine      clean up the transcript on stdin and print it; exit 3 = fell back to raw,
-#               exit 4 = Claude was unavailable and S1-mini cleaned it up    [used by the app]
+#               exit 4 = the online engine was unavailable and S1-mini cleaned it up,
+#               exit 5 = the meaning guard pasted Whisper's text; details in $VTT_RESULT_FILE (JSON)  [used by the app]
 #   s1-server       start [--keep] | release | stop | status: the local S1-mini server (llama-server)
 #   whisper-server  start [--keep] | release | stop | status: Whisper with the model kept loaded
 
 set -euo pipefail
+# Everything this script writes (logs, recordings, state, prompts) is readable by the user only.
+umask 077
 
 # VTT_BIN_DIR: the app's bundled whisper-server, whisper-cli and llama-server, which win over Homebrew's.
 export PATH="${VTT_BIN_DIR:+$VTT_BIN_DIR:}/opt/homebrew/bin:/usr/local/bin:$HOME/.local/bin:$PATH"
@@ -23,8 +26,17 @@ CONFIG_FILE="${VTT_CONFIG:-$HOME/.config/voice-to-text/config.sh}"
 # shellcheck source=/dev/null
 [[ -f "$CONFIG_FILE" ]] && source "$CONFIG_FILE"
 
+# The compressed model (the app's default) when it's there, else the full one install.sh used to download.
+default_whisper_model() {
+  local dir="$HOME/.local/share/whisper" name
+  for name in ggml-large-v3-turbo-q5_0.bin ggml-large-v3-turbo.bin; do
+    [[ -f "$dir/$name" ]] && { printf '%s' "$dir/$name"; return 0; }
+  done
+  printf '%s' "$dir/ggml-large-v3-turbo-q5_0.bin"
+}
+
 # VTT_* variables are set by the menu-bar app and take precedence over config.sh.
-WHISPER_MODEL="${VTT_WHISPER_MODEL:-${WHISPER_MODEL:-$HOME/.local/share/whisper/ggml-large-v3-turbo.bin}}"
+WHISPER_MODEL="${VTT_WHISPER_MODEL:-${WHISPER_MODEL:-$(default_whisper_model)}}"
 # Keep Whisper loaded in a local whisper-server (about 0.9 s per dictation instead of 1.6-2 s with whisper-cli).
 # It starts when recording starts and stops after WHISPER_IDLE_MINUTES unused; whisper-cli is the fallback.
 WHISPER_SERVER="${WHISPER_SERVER:-on}"
@@ -40,12 +52,28 @@ CLAUDE_THINKING_TOKENS="${CLAUDE_THINKING_TOKENS:-0}"
 # Start the claude process before the transcript is ready (see claude_prestart).
 CLAUDE_PRESTART="${CLAUDE_PRESTART:-on}"
 CLAUDE_BIN="${VTT_CLAUDE_BIN:-${CLAUDE_BIN:-claude}}"
+# An exported ANTHROPIC_API_KEY (or ANTHROPIC_AUTH_TOKEN) makes `claude -p` bill the API instead of the user's plan.
+# Our calls drop them, unless this is on.
+CLAUDE_USE_API_KEY="${CLAUDE_USE_API_KEY:-off}"
 REFINE="${VTT_REFINE:-${REFINE:-on}}"
 REFINE_MIN_WORDS="${REFINE_MIN_WORDS:-4}"
-# Cleanup engine: claude, or s1 (S1-mini by Superwhisper, fully offline through llama.cpp).
+# Cleanup engine: claude; s1 (S1-mini by Superwhisper, fully offline through llama.cpp); or openai (any
+# OpenAI-compatible /chat/completions endpoint: Ollama, LM Studio, OpenAI, Groq, OpenRouter...).
 CLEANUP="${VTT_CLEANUP:-${CLEANUP:-claude}}"
-# Use S1-mini when Claude is unavailable: offline, not logged in, rate limited, an error or a timeout.
+OPENAI_BASE_URL="${VTT_OPENAI_BASE_URL:-${OPENAI_BASE_URL:-}}" # e.g. http://localhost:11434/v1 (Ollama)
+OPENAI_MODEL="${VTT_OPENAI_MODEL:-${OPENAI_MODEL:-}}"
+OPENAI_TIMEOUT="${OPENAI_TIMEOUT:-15}"
+# The key: OPENAI_API_KEY in config.sh or the environment, or a file the app writes for this run (VTT_OPENAI_KEY_FILE),
+# which is read and deleted right away so the key only lives in this process's memory.
+OPENAI_API_KEY="${OPENAI_API_KEY:-}"
+if [[ -n "${VTT_OPENAI_KEY_FILE:-}" && -f "$VTT_OPENAI_KEY_FILE" ]]; then
+  OPENAI_API_KEY="$(tr -d '\r\n' <"$VTT_OPENAI_KEY_FILE")"
+  rm -f "$VTT_OPENAI_KEY_FILE"
+fi
+# Use S1-mini when the online engine is unavailable: offline, not logged in, rate limited, an error or a timeout.
 S1_FALLBACK="${VTT_S1_FALLBACK:-${S1_FALLBACK:-on}}"
+# After an AI cleanup, paste Whisper's text instead if a number or a negation ("not", "never"...) went missing.
+MEANING_GUARD="${MEANING_GUARD:-on}"
 S1_MODEL="${S1_MODEL:-$HOME/.local/share/s1-mini/s1-mini-q4_k_m.gguf}"
 S1_PORT="${S1_PORT:-8178}"
 S1_TIMEOUT="${S1_TIMEOUT:-10}"
@@ -60,7 +88,9 @@ RESTORE_CLIPBOARD="${RESTORE_CLIPBOARD:-on}"
 SOUNDS="${SOUNDS:-on}"
 MAX_SECONDS="${MAX_SECONDS:-300}"
 MIN_SECONDS="${MIN_SECONDS:-0.5}"
-LOG_TEXT="${LOG_TEXT:-on}"
+# Dictated text (raw and cleaned) in the log, for debugging. Off: the log keeps timings and outcomes only.
+LOG_TEXT="${VTT_LOG_TEXT:-${LOG_TEXT:-off}}"
+LOG_MAX_KB="${LOG_MAX_KB:-1024}" # dictate.log and error.log rotate at this size, keeping one previous file
 PROMPT_FILE="${PROMPT_FILE:-$HOME/.config/voice-to-text/prompt.txt}"
 DICTIONARY_FILE="${DICTIONARY_FILE:-$HOME/.config/voice-to-text/dictionary.txt}"
 MODE="${VTT_MODE:-${MODE:-default}}" # default | chat | email | code | notes | raw
@@ -95,6 +125,35 @@ mkdir -p "$STATE_DIR" "$LOG_DIR"
 # The pre-started Claude process (see claude_prestart). Reset here so nothing is inherited from the environment:
 # Claude Code itself exports CLAUDE_PID, and killing an inherited pid would end the user's own session.
 PRESTART_PID="" PRESTART_DIR="" PRESTART_OFFLINE=""
+# Why the online engine failed (kind, resets and detail, separated by \037), written by the subshells that call it. Per run.
+ENGINE_ERR_FILE="$STATE_DIR/engine-error.$$"
+# refine's details for the app (JSON): the engine, why it failed, the guard's reason. Set by the app.
+RESULT_FILE="${VTT_RESULT_FILE:-}"
+
+# Keeps the logs small and private: rotates at LOG_MAX_KB (one previous file is kept), and with LOG_TEXT off removes
+# dictated text lines ("  raw:" / "  cleaned:") that an earlier version or an earlier LOG_TEXT=on wrote.
+# The app starts several commands at once (whisper-server start and refine): one does the work, under a lock, and none
+# of them can fail because of it.
+log_maintain() {
+  local file size lock="$STATE_DIR/log-maintain.lock"
+  # A lock left by a killed run is stale after a minute.
+  find "$lock" -maxdepth 0 -mmin +1 -exec rmdir {} \; 2>/dev/null || true
+  mkdir "$lock" 2>/dev/null || return 0
+  for file in "$LOG_FILE" "$ERR_FILE"; do
+    [[ -f "$file" ]] || continue
+    size="$(stat -f %z "$file" 2>/dev/null || echo 0)"
+    if ((size > LOG_MAX_KB * 1024)); then mv -f "$file" "$file.1" 2>/dev/null || true; fi
+  done
+  if [[ "$LOG_TEXT" != on ]]; then
+    for file in "$LOG_FILE" "$LOG_FILE.1"; do
+      if [[ -f "$file" ]] && grep -Eq '^[0-9-]+ [0-9:]+   (raw|cleaned): ' "$file"; then
+        perl -i -ne 'print unless /^[0-9-]+ [0-9:]+   (?:raw|cleaned): /' "$file" 2>/dev/null || true
+      fi
+    done
+  fi
+  chmod 600 "$LOG_FILE" "$LOG_FILE.1" "$ERR_FILE" "$ERR_FILE.1" 2>/dev/null || true
+  rmdir "$lock" 2>/dev/null || true
+}
 
 # Used only if prompts/system.md is missing.
 FALLBACK_PROMPT='You clean up dictated speech. The user message contains a raw speech-to-text transcript inside <transcript> tags.
@@ -324,10 +383,142 @@ post_process() {
   '
 }
 
-# Prints refined text, or fails (non-zero) so the caller can fall back to raw text.
+# --- Claude ---
+# Every Claude call runs the user's own `claude` CLI in print mode, from a neutral directory (/tmp, so no project
+# CLAUDE.md is found), with no tools and no MCP servers. Where the CLI supports it, --safe-mode also keeps out the user's
+# ~/.claude/CLAUDE.md, auto memory, skills, plugins and hooks (measured: 487 input tokens instead of 624, same speed).
+# Never --bare: bare mode ignores the subscription login.
+
+# The optional flags this CLI supports, one per line, checked once per binary (path, size and date).
+# --system-prompt-file isn't listed in --help, so it's probed: with a missing file, a CLI that knows it says "not found".
+claude_options() {
+  local bin sig cache help probe
+  bin="$(command -v "$CLAUDE_BIN" 2>/dev/null)" || return 0
+  sig="$bin $(stat -L -f '%z-%m' "$bin" 2>/dev/null)"
+  cache="$STATE_DIR/claude-options"
+  if [[ -f "$cache" && "$(head -1 "$cache")" == "$sig" ]]; then
+    tail -n +2 "$cache"
+    return 0
+  fi
+  help="$(cd /tmp && perl -e 'alarm 10; exec @ARGV' "$CLAUDE_BIN" --help </dev/null 2>/dev/null)" || help=""
+  probe="$(cd /tmp && perl -e 'alarm 15; exec @ARGV' "$CLAUDE_BIN" -p --system-prompt-file /nonexistent/vtt-probe \
+    </dev/null 2>&1)" || true
+  {
+    printf '%s\n' "$sig"
+    [[ "$help" == *--safe-mode* ]] && echo --safe-mode
+    [[ "$help" == *--disable-slash-commands* ]] && echo --disable-slash-commands
+    [[ "$probe" == *"not found"* ]] && echo --system-prompt-file
+  } >"$cache"
+  tail -n +2 "$cache"
+}
+
+# Sets CLAUDE_CMD: the claude CLI in print mode with our environment. It drops ANTHROPIC_API_KEY and ANTHROPIC_AUTH_TOKEN
+# (an exported key would switch the user to API billing) unless CLAUDE_USE_API_KEY=on, turns off extended thinking,
+# retries once at most (a failure falls back to S1-mini quickly), and skips auto-updates and claude.ai connectors.
+claude_command() {
+  local option
+  CLAUDE_CMD=(env)
+  [[ "$CLAUDE_USE_API_KEY" == on ]] || CLAUDE_CMD+=(-u ANTHROPIC_API_KEY -u ANTHROPIC_AUTH_TOKEN)
+  CLAUDE_CMD+=(MAX_THINKING_TOKENS="$CLAUDE_THINKING_TOKENS" CLAUDE_CODE_MAX_RETRIES=1 CLAUDE_CODE_STARTUP_FAILURE_RESULTS=1
+    DISABLE_AUTOUPDATER=1 ENABLE_CLAUDEAI_MCP_SERVERS=false
+    "$CLAUDE_BIN" -p --model "$CLAUDE_MODEL" --tools "" --strict-mcp-config --no-session-persistence)
+  while IFS= read -r option; do
+    case "$option" in --safe-mode | --disable-slash-commands) CLAUDE_CMD+=("$option") ;; esac
+  done < <(claude_options)
+}
+
+# Sets PROMPT_ARGS to pass the system prompt: from a private file ($1) when the CLI supports it, so the prompt isn't in
+# the process list, else as an argument.
+claude_prompt_args() {
+  if claude_options | grep -qx -- --system-prompt-file; then
+    system_prompt >"$1"
+    PROMPT_ARGS=(--system-prompt-file "$1")
+  else
+    PROMPT_ARGS=(--system-prompt "$(system_prompt)")
+  fi
+}
+
+# Records why the online engine failed, unless a more specific reason is already there: kind (limit, auth,
+# auth-mismatch, offline, timeout, config, error), then the reset time for a limit, then a short detail.
+engine_error() {
+  [[ -s "$ENGINE_ERR_FILE" ]] || printf '%s\037%s\037%s\n' "$1" "${3:-}" "${2:-}" >"$ENGINE_ERR_FILE"
+}
+
+# Reads Claude's JSON events (stream-json lines, or the one-shot call's single JSON object) on stdin and prints the
+# answer. Exit 1: Claude failed; the reason goes to ENGINE_ERR_FILE when the events say it (a usage limit with its reset
+# time, a sign-in problem, an API error). Exit 2: nothing understandable came back (the format may have changed).
+claude_parse() {
+  ERR_OUT="$ENGINE_ERR_FILE" LOG_OUT="$LOG_FILE" perl -MJSON::PP -MPOSIX=strftime -e '
+    my ($answer, $failed, $bad, $events, $kind, $retry_kind, $resets, $detail) = (undef, 0, 0, 0, "", "", "", "");
+    my %limit = map { $_ => 1 } qw(rate_limit billing_error credits_required);
+    my %auth = map { $_ => 1 } qw(authentication_failed oauth_org_not_allowed account_on_hold);
+    sub classify { my $error = shift // ""; $limit{$error} ? "limit" : $auth{$error} ? "auth" : "" }
+    while (my $line = <STDIN>) {
+      next unless $line =~ /\S/;
+      my $event = eval { JSON::PP->new->utf8->decode($line) };
+      if (ref $event ne "HASH" || !$event->{type}) { $bad++; next }
+      $events++;
+      my $type = $event->{type};
+      if ($type eq "rate_limit_event") {
+        my $info = ref $event->{rate_limit_info} eq "HASH" ? $event->{rate_limit_info} : {};
+        my $status = $info->{status} // "";
+        if ($status eq "rejected") { $kind = "limit"; $resets = $info->{resetsAt} // $resets }
+        elsif ($status eq "allowed_warning" && open my $log, ">>", $ENV{LOG_OUT}) {
+          my $used = $info->{utilization} // "?";
+          $used = sprintf("%.0f%%", $used * 100) if $used =~ /^[0-9.]+$/ && $used <= 1;
+          print $log strftime("%Y-%m-%d %H:%M:%S", localtime), " WARN claude usage: $used of the plan limit used\n";
+          close $log;
+        }
+      } elsif ($type eq "system" && ($event->{subtype} // "") eq "api_retry") {
+        $retry_kind ||= classify($event->{error});
+      } elsif ($type eq "assistant") {
+        $kind ||= classify($event->{error});
+        if (ref $event->{message}{content} eq "ARRAY") {
+          my $text = join "", map { ref $_ eq "HASH" && ($_->{type} // "") eq "text" ? $_->{text} // "" : "" }
+            @{ $event->{message}{content} };
+          $answer = $text if length $text;
+        }
+      } elsif ($type eq "result") {
+        my $text = ref $event->{result} ? "" : ($event->{result} // "");
+        if ($event->{is_error}) {
+          $failed = 1;
+          my $status = $event->{api_error_status} // 0;
+          $detail = substr($text, 0, 200);
+          $detail =~ s/[\t\n\x1f]+/ /g;
+          if (!$kind) {
+            if ($status == 429 || $text =~ /limit reached|hit your .{0,20}limit|(?:usage|rate|session|weekly) limit/i) {
+              $kind = "limit";
+            } elsif ($status == 401 || $status == 403 || $text =~ /log ?in|sign ?in|authenticat|oauth|api key|credential/i) {
+              $kind = "auth";
+            }
+          }
+          $resets ||= $1 if $text =~ /resets? (?:at )?([^.\x{b7}\n]+)/i;
+        } else {
+          $answer = $text if length $text;
+        }
+        last;
+      }
+    }
+    if (!$failed && defined $answer && length $answer) {
+      binmode STDOUT, ":encoding(UTF-8)";
+      print $answer;
+      exit 0;
+    }
+    my $reason = $kind || $retry_kind;
+    if ($failed || $reason) {
+      if (open my $out, ">:encoding(UTF-8)", $ENV{ERR_OUT}) {
+        print $out join("\x1f", $reason || "error", $resets, $detail), "\n";
+        close $out;
+      }
+      exit 1;
+    }
+    exit(($bad || !$events) ? 2 : 1);'
+}
+
+# Prints Claude's cleanup, or fails (non-zero) so the caller can fall back; the reason is in ENGINE_ERR_FILE.
 # Uses the Claude process started by claude_prestart when there is one, otherwise a one-shot `claude -p`.
 refine() {
-  local raw="$1" sys out status=0
+  local raw="$1" out status=0 prompt_file
   if [[ -n "${PRESTART_PID:-}" ]]; then
     out="$(claude_send "$raw")" || status=$?
     if ((status == 0)) && [[ -n "$(trim "$out")" ]]; then
@@ -338,14 +529,21 @@ refine() {
     # The stream wasn't understood (a Claude Code update may have changed the flags or format): the one-shot
     # call doesn't depend on it.
     log "WARN claude stream-json not understood (see $ERR_FILE), using a one-shot call"
+    rm -f "$ENGINE_ERR_FILE"
   fi
-  sys="$(system_prompt)"
-  # Neutral cwd so no project CLAUDE.md is loaded. perl's alarm acts as `timeout` (not on macOS by default).
+  claude_command
+  prompt_file="$(mktemp "$STATE_DIR/system.XXXXXX")"
+  claude_prompt_args "$prompt_file"
+  # Neutral cwd so no project CLAUDE.md is loaded. perl's alarm acts as `timeout` (not on macOS by default); an
+  # error still prints its JSON result (and exits 1), so the output is parsed whatever the exit status.
+  status=0
   out="$(cd /tmp && user_message "$raw" |
-    MAX_THINKING_TOKENS="$CLAUDE_THINKING_TOKENS" perl -e 'alarm shift; exec @ARGV or die "exec failed: $!"' "$CLAUDE_TIMEOUT" \
-      "$CLAUDE_BIN" -p --model "$CLAUDE_MODEL" --tools "" --strict-mcp-config --no-session-persistence \
-      --system-prompt "$sys" 2>>"$ERR_FILE")" || return 1
-  [[ -n "$(trim "$out")" ]] || return 1
+    perl -e 'alarm shift; exec @ARGV or die "exec failed: $!"' "$CLAUDE_TIMEOUT" \
+      "${CLAUDE_CMD[@]}" --output-format json "${PROMPT_ARGS[@]}" 2>>"$ERR_FILE")" || status=$?
+  rm -f "$prompt_file"
+  ((status == 142)) && { engine_error timeout; return 1; } # SIGALRM: CLAUDE_TIMEOUT passed
+  out="$(printf '%s\n' "$out" | claude_parse)" || { engine_error error; return 1; }
+  [[ -n "$(trim "$out")" ]] || { engine_error error "empty answer"; return 1; }
   printf '%s' "$out"
 }
 
@@ -365,24 +563,25 @@ claude_prestart() {
     PRESTART_OFFLINE=on
     return 0
   fi
-  local sys
-  sys="$(system_prompt)"
+  claude_command
   PRESTART_DIR="$(mktemp -d "$STATE_DIR/claude.XXXXXX")"
+  claude_prompt_args "$PRESTART_DIR/system.md"
   mkfifo "$PRESTART_DIR/in"
-  (cd /tmp && MAX_THINKING_TOKENS="$CLAUDE_THINKING_TOKENS" exec "$CLAUDE_BIN" -p --input-format stream-json \
-    --output-format stream-json --verbose --model "$CLAUDE_MODEL" --tools "" --strict-mcp-config \
-    --no-session-persistence --system-prompt "$sys") <"$PRESTART_DIR/in" >"$PRESTART_DIR/out" 2>>"$ERR_FILE" &
+  (cd /tmp && exec "${CLAUDE_CMD[@]}" --input-format stream-json --output-format stream-json --verbose \
+    "${PROMPT_ARGS[@]}") <"$PRESTART_DIR/in" >"$PRESTART_DIR/out" 2>>"$ERR_FILE" &
   PRESTART_PID=$!
+  disown "$PRESTART_PID" 2>/dev/null || true # no "Terminated" notice when claude_cleanup ends it
   # Holds its stdin open until the transcript is sent (the fifo open waits for the reader).
   exec 3>"$PRESTART_DIR/in"
 }
 
 # Sends one transcript to the pre-started process and prints the answer. Runs in a subshell (from refine_text).
-# Returns 1 if Claude failed (error result, no answer, stuck), so cleanup falls back to S1-mini or raw text, and 2 if the
-# stream wasn't understood (the process died before answering, or printed non-JSON), so refine() uses a one-shot call.
-# A normal answer comes in about 1 s: `system init` about 0.1 s after the message, then `assistant`, then `result`.
+# Returns 1 if Claude failed (an error result, a usage limit or sign-in problem, no answer, stuck), so cleanup falls back
+# to S1-mini or raw text, and 2 if the stream wasn't understood (the process died before answering, or printed non-JSON),
+# so refine() uses a one-shot call. A normal answer comes in about 1 s: `system init` about 0.1 s after the message,
+# then `assistant`, then `result`. A rejected usage limit or a sign-in error ends the wait at once.
 claude_send() {
-  local raw="$1" out="$PRESTART_DIR/out" sent now answer_at=0
+  local raw="$1" out="$PRESTART_DIR/out" sent now answer_at=0 timed_out="" status=0
   trap '' PIPE # if claude died, the write fails instead of killing the script
   VTT_USER_MESSAGE="$(user_message "$raw")" perl -MJSON::PP -e '
     my $message = $ENV{VTT_USER_MESSAGE}; utf8::decode($message);
@@ -394,40 +593,30 @@ claude_send() {
     grep -q '"type":"result"' "$out" 2>/dev/null && break
     kill -0 "$PRESTART_PID" 2>/dev/null || break
     grep -qv '^{' "$out" 2>/dev/null && break                    # a line that isn't JSON: the format changed
+    grep -q '"status":"rejected"' "$out" 2>/dev/null && break     # usage limit reached
+    grep '"api_retry"' "$out" 2>/dev/null |
+      grep -Eq '"error":"(rate_limit|billing_error|authentication_failed|oauth_org_not_allowed|account_on_hold)"' && break
     now="$(now_ms)"
-    ((now - sent >= CLAUDE_TIMEOUT * 1000)) && break
-    ((now - sent >= 5000)) && [[ ! -s "$out" ]] && break          # no event at all after 5 s: stuck
+    ((now - sent >= CLAUDE_TIMEOUT * 1000)) && { timed_out=1; break; }
+    ((now - sent >= 5000)) && [[ ! -s "$out" ]] && { timed_out=1; break; } # no event at all after 5 s: stuck
     if ((answer_at == 0)) && grep -q '"type":"assistant"' "$out" 2>/dev/null; then answer_at="$now"; fi
     ((answer_at > 0 && now - answer_at >= 1500)) && break         # an answer but no result after 1.5 s: use the answer
     sleep 0.05
   done
   if [[ ! -s "$out" ]]; then
-    kill -0 "$PRESTART_PID" 2>/dev/null && return 1 # stuck
-    return 2                                         # died without a word
+    kill -0 "$PRESTART_PID" 2>/dev/null && { engine_error timeout; return 1; } # stuck
+    return 2                                                                  # died without a word
   fi
-  perl -MJSON::PP -e '
-    my ($answer, $bad, $events) = (undef, 0, 0);
-    while (my $line = <>) {
-      my $event = eval { JSON::PP->new->utf8->decode($line) };
-      if (ref $event ne "HASH" || !$event->{type}) { $bad++; next }
-      $events++;
-      if ($event->{type} eq "result") {
-        exit 1 if $event->{is_error};
-        $answer = $event->{result} if defined $event->{result};
-        last;
-      }
-      if ($event->{type} eq "assistant" && ref $event->{message}{content} eq "ARRAY") {
-        my $text = join "", map { ref $_ eq "HASH" && ($_->{type} // "") eq "text" ? $_->{text} // "" : "" }
-          @{ $event->{message}{content} };
-        $answer = $text if length $text;
-      }
-    }
-    if (defined $answer) { binmode STDOUT, ":encoding(UTF-8)"; print $answer; exit 0 }
-    exit(($bad || !$events) ? 2 : 1);' "$out"
+  claude_parse <"$out" || status=$?
+  if ((status == 1)); then
+    if [[ -n "$timed_out" ]]; then engine_error timeout; else engine_error error; fi
+  fi
+  return "$status"
 }
 
 # Closes the pre-started process's stdin (it exits) and removes its files. Safe to call when none was started.
 claude_cleanup() {
+  rm -f "$ENGINE_ERR_FILE"
   [[ -n "${PRESTART_PID:-}" ]] || return 0
   exec 3>&-
   kill "$PRESTART_PID" 2>/dev/null || true
@@ -435,15 +624,25 @@ claude_cleanup() {
   PRESTART_PID="" PRESTART_DIR=""
 }
 
-# True when Claude can't be reached, so cleanup skips it instead of waiting for it to time out.
-# No default route means no network at all. Otherwise a TCP connect to Claude's API (1 s connect, 2 s including DNS)
-# catches "connected but no internet": ISP down, a captive portal, a dead hotspot. It costs about 20 ms when online.
-# Skipped behind a proxy, where a direct connection can fail although Claude works.
+# Runs the claude CLI without our print-mode flags (for `auth status`), with the same API key rule and a 10 s limit.
+claude_plain() {
+  if [[ "$CLAUDE_USE_API_KEY" == on ]]; then
+    perl -e 'alarm 10; exec @ARGV' "$CLAUDE_BIN" "$@" </dev/null
+  else
+    perl -e 'alarm 10; exec @ARGV' env -u ANTHROPIC_API_KEY -u ANTHROPIC_AUTH_TOKEN "$CLAUDE_BIN" "$@" </dev/null
+  fi
+}
+
+# True when the online engine can't be reached, so cleanup skips it instead of waiting for it to time out.
+# No default route means no network at all. Otherwise a TCP connect to the engine's host (1 s connect, 2 s including
+# DNS) catches "connected but no internet": ISP down, a captive portal, a dead hotspot. It costs about 20 ms when online.
+# Skipped behind a proxy, where a direct connection can fail although the engine works.
 is_offline() {
+  local host="${1:-$ONLINE_CHECK_HOST}" port="${2:-443}"
   [[ "${VTT_OFFLINE:-}" == on ]] && return 0
   route -n get default >/dev/null 2>&1 || return 0
   [[ "$ONLINE_CHECK" == on && -z "${HTTPS_PROXY:-}${https_proxy:-}${ALL_PROXY:-}${all_proxy:-}" ]] || return 1
-  ! perl -e 'alarm shift; exec @ARGV or die' 2 nc -z -G 1 "$ONLINE_CHECK_HOST" 443 >/dev/null 2>&1
+  ! perl -e 'alarm shift; exec @ARGV or die' 2 nc -z -G 1 "$host" "$port" >/dev/null 2>&1
 }
 
 # --- Local model servers ---
@@ -696,22 +895,210 @@ transcribe_wav() {
   fi
 }
 
-# Runs S1-mini on RAW_TEXT. On success sets RESULT and REFINE_STATUS to $1. Always sets S1_MS.
+# --- OpenAI-compatible endpoint ---
+# Any /chat/completions server: Ollama, LM Studio, OpenAI, Groq, OpenRouter... It gets the same system prompt and user
+# message as Claude (vocabulary included). The key reaches curl through a pipe (-H @<(...)): never argv, never a file.
+
+# The request headers for curl, read from a pipe: the key never appears in the process list or on disk.
+openai_headers() {
+  printf 'Content-Type: application/json\n'
+  [[ -z "$OPENAI_API_KEY" ]] || printf 'Authorization: Bearer %s\n' "$OPENAI_API_KEY"
+}
+
+# Sets OA_HOST and OA_PORT from OPENAI_BASE_URL, for the online check.
+openai_endpoint() {
+  local rest="${OPENAI_BASE_URL#*://}" scheme="${OPENAI_BASE_URL%%://*}"
+  rest="${rest%%/*}"
+  rest="${rest##*@}"
+  if [[ "$rest" == *:* && "$rest" != \[* ]]; then
+    OA_HOST="${rest%:*}" OA_PORT="${rest##*:}"
+  else
+    OA_HOST="$rest" OA_PORT=443
+    [[ "$scheme" == http ]] && OA_PORT=80
+  fi
+}
+
+openai_is_local() {
+  openai_endpoint
+  case "$OA_HOST" in localhost | 127.* | \[::1\]* | ::1) return 0 ;; *) return 1 ;; esac
+}
+
+# Prints the endpoint's cleanup, or fails so the caller can fall back; the reason is in ENGINE_ERR_FILE.
+refine_openai() {
+  local raw="$1" response code="" body out attempt temperature=0 status message
+  [[ -n "$OPENAI_BASE_URL" && -n "$OPENAI_MODEL" ]] || { engine_error config "base URL or model not set"; return 1; }
+  for attempt in 1 2; do
+    status=0
+    response="$(OA_SYS="$(system_prompt)" OA_USER="$(user_message "$raw")" OA_MODEL="$OPENAI_MODEL" OA_TEMP="$temperature" \
+      perl -MJSON::PP -e '
+        my ($system, $user) = ($ENV{OA_SYS}, $ENV{OA_USER}); utf8::decode($system); utf8::decode($user);
+        my %body = (model => $ENV{OA_MODEL},
+          messages => [{role => "system", content => $system}, {role => "user", content => $user}]);
+        $body{temperature} = 0 + $ENV{OA_TEMP} if length $ENV{OA_TEMP};
+        print JSON::PP->new->utf8->encode(\%body);' |
+      curl -s --max-time "$OPENAI_TIMEOUT" -H @<(openai_headers) --data-binary @- -w '\n%{http_code}' \
+        "${OPENAI_BASE_URL%/}/chat/completions" 2>>"$ERR_FILE")" || status=$?
+    if ((status != 0)); then
+      if ((status == 28)); then engine_error timeout; else engine_error error "curl exit $status"; fi
+      return 1
+    fi
+    code="${response##*$'\n'}"
+    body="${response%$'\n'*}"
+    # Some models (OpenAI's reasoning ones) only take the default temperature.
+    if [[ "$code" == 400 && "$attempt" == 1 && "$body" == *temperature* ]]; then
+      temperature=""
+      continue
+    fi
+    break
+  done
+  case "$code" in
+    200) ;;
+    401 | 403) engine_error auth "HTTP $code"; return 1 ;;
+    429) engine_error limit "HTTP 429"; return 1 ;;
+    *)
+      # Only the server's error message: some proxies echo the request (the transcript) in the body.
+      message="$(printf '%s' "$body" | perl -MJSON::PP -0777 -ne '
+        my $error = eval { JSON::PP->new->utf8->decode($_)->{error} };
+        my $text = ref $error eq "HASH" ? $error->{message} // "" : ref $error ? "" : $error // "";
+        $text =~ s/\s+/ /g; binmode STDOUT, ":encoding(UTF-8)"; print substr($text, 0, 160);' 2>/dev/null)" || message=""
+      engine_error error "HTTP $code"
+      log "WARN openai HTTP $code${message:+: $message}"
+      return 1
+      ;;
+  esac
+  out="$(printf '%s' "$body" | perl -MJSON::PP -0777 -ne '
+      my $content = eval { JSON::PP->new->utf8->decode($_)->{choices}[0]{message}{content} } // "";
+      $content =~ s#<think>.*?</think>##s;
+      binmode STDOUT, ":encoding(UTF-8)";
+      print $content;')" || true
+  [[ -n "$(trim "$out")" ]] || { engine_error error "empty answer"; return 1; }
+  printf '%s' "$out"
+}
+
+# --- The meaning guard ---
+# Prints what went missing and fails if the cleanup dropped a number or a negation the speaker said: "the budget is
+# 15,400" must keep 15400, and "I can't make it" must keep its "not". Numbers the cleanup adds (forty two -> 42) or
+# reformats ("at 230" -> 2:30, "5551234567" -> (555) 123-4567, "1 of them" -> "one of them") are fine, and so are
+# repeats the cleanup removes ("I don't, I don't think"). A self-correction ("Friday, no, Thursday", "no wait", "I mean,")
+# skips the check, because dropping the corrected part is the point; ordinary words ("wait for", "actually works") don't.
+meaning_guard() {
+  GUARD_RAW="$1" GUARD_CLEAN="$2" perl -e '
+    my ($raw, $clean) = map { my $text = $ENV{$_} // ""; utf8::decode($text); $text } qw(GUARD_RAW GUARD_CLEAN);
+    exit 0 if $raw =~ /\b(?:no|wait|sorry|actually|rather)\s*,|\bno,?\s+(?:wait|sorry|actually|i mean|make that)\b/i
+      || $raw =~ /\bi mean\s*,|\bi meant\b|\b(?:make|scratch|cancel) that\b|\bor rather\b|\bcorrection\b/i
+      || $raw =~ /\bno\s+(?=\d)/i;
+    # Words only, lower case, with immediate repeats removed ("i do not i do not think" -> "i do not think").
+    sub words {
+      my $text = lc shift;
+      $text =~ s/[\x{2018}\x{2019}]/\x27/g;
+      $text =~ s/n\x27t\b/ not/g;
+      $text =~ s/\bcannot\b/can not/g;
+      $text =~ s/[^\w\x27]+/ /g;
+      $text = " $text ";
+      1 while $text =~ s/ ((?:\S+ ){1,5})\1/ $1/g;
+      return $text;
+    }
+    my @small = qw(zero one two three four five six seven eight nine ten);
+    sub numbers {
+      my $text = shift;
+      $text =~ s/(?<=\d)[,\x{2009}\x{202F}\x{A0}](?=\d{3}(?!\d))//g; # 15,400 -> 15400
+      my %count;
+      for my $number ($text =~ /\d+/g) { $number =~ s/^0+(?=\d)//; $count{$number}++ }
+      return \%count;
+    }
+    my ($raw_words, $clean_words) = (words($raw), words($clean));
+    my ($before, $after) = (numbers($raw_words), numbers($clean_words));
+    (my $digits = $clean) =~ s/\D+//g; # every digit of the cleanup in order: reformatted numbers are still in it
+    for my $number (sort keys %$before) {
+      my $have = $after->{$number} // 0;
+      next if $have >= $before->{$number};
+      next if $have == 0 && index($digits, $number) >= 0;
+      next if $have == 0 && $number <= 10 && $clean_words =~ /\b$small[$number]\b/;
+      print "a number ($number)";
+      exit 1;
+    }
+    my $negations = qr/\b(?:not|never|without|nothing|nobody|none|neither|nor|no one)\b/;
+    my @before = $raw_words =~ /$negations/g;
+    my @after = $clean_words =~ /$negations/g;
+    if (@after < @before) { print "a negation"; exit 1 }
+    exit 0;'
+}
+
+# --- Cleanup ---
+
+# Runs S1-mini on RAW_TEXT. On success sets RESULT, ENGINE and REFINE_STATUS to $1. Always sets S1_MS.
 try_s1() {
   local t0 out status=1
   t0="$(now_ms)"
   if out="$(refine_s1 "$RAW_TEXT")"; then
-    RESULT="$out" REFINE_STATUS="$1" status=0
+    RESULT="$out" REFINE_STATUS="$1" ENGINE=s1 status=0
   fi
   S1_MS=$(($(now_ms) - t0))
   return "$status"
 }
 
-# Cleans up RAW_TEXT. Sets RESULT, REFINE_STATUS, CLAUDE_MS and S1_MS.
-# REFINE_STATUS: ok (Claude) | s1 (S1-mini selected) | s1-fallback (Claude unavailable) | skipped | failed-fallback-raw
+# A reset time for the log and the app: an epoch time (seconds or ms) becomes "3:45 PM" (with the date if not today).
+format_resets() {
+  local value="$1"
+  if [[ "$value" =~ ^[0-9]+$ ]]; then
+    ((value > 100000000000)) && value=$((value / 1000))
+    if [[ "$(date -r "$value" +%F)" == "$(date +%F)" ]]; then
+      date -r "$value" '+%l:%M %p' | sed 's/^ *//'
+    else
+      date -r "$value" '+%b %e, %l:%M %p' | sed 's/  */ /g'
+    fi
+  else
+    printf '%s' "$value"
+  fi
+}
+
+# Runs the selected online engine (Claude, or the OpenAI-compatible endpoint) on RAW_TEXT. On success sets RESULT,
+# ENGINE and REFINE_STATUS=ok. Otherwise REFINE_STATUS=failed-fallback-raw, and ENGINE_ERROR and ENGINE_RESETS say why.
+try_online() {
+  local t0 out offline="" detail
+  REFINE_STATUS="failed-fallback-raw"
+  rm -f "$ENGINE_ERR_FILE"
+  if [[ "$CLEANUP" == openai ]]; then
+    if ! openai_is_local && is_offline "$OA_HOST" "$OA_PORT"; then offline=1; fi
+  elif [[ -n "${PRESTART_OFFLINE:-}" ]] || { [[ -z "${PRESTART_PID:-}" ]] && is_offline; }; then
+    offline=1 # a pre-started process means the online check already passed when recording started
+  fi
+  if [[ -n "$offline" ]]; then
+    log "OFFLINE skipping $CLEANUP"
+    ENGINE_ERROR=offline
+    return 0
+  fi
+  t0="$(now_ms)"
+  if [[ "$CLEANUP" == openai ]]; then
+    out="$(refine_openai "$RAW_TEXT")" && RESULT="$out" REFINE_STATUS=ok ENGINE=openai
+    OPENAI_MS=$(($(now_ms) - t0))
+  else
+    out="$(refine "$RAW_TEXT")" && RESULT="$out" REFINE_STATUS=ok ENGINE=claude
+    CLAUDE_MS=$(($(now_ms) - t0))
+  fi
+  [[ "$REFINE_STATUS" == ok ]] && return 0
+  if [[ -s "$ENGINE_ERR_FILE" ]]; then
+    IFS=$'\037' read -r ENGINE_ERROR ENGINE_RESETS detail <"$ENGINE_ERR_FILE" || true
+  fi
+  ENGINE_ERROR="${ENGINE_ERROR:-error}"
+  if [[ "$CLEANUP" == claude && "$ENGINE_ERROR" == auth ]] &&
+    claude_plain auth status --json 2>/dev/null | grep -Eq '"loggedIn": *true'; then
+    # The --bare canary: Anthropic plans to make bare mode (no subscription login) the default for -p.
+    ENGINE_ERROR=auth-mismatch
+    log "WARN claude -p says it isn't signed in, but 'claude auth status' says it is: Claude Code may have changed how" \
+      "print mode signs in (see https://code.claude.com/docs/en/headless)"
+  fi
+  ENGINE_RESETS="$(format_resets "${ENGINE_RESETS:-}")"
+  log "WARN $CLEANUP failed: $ENGINE_ERROR${ENGINE_RESETS:+ (resets $ENGINE_RESETS)}${detail:+: $detail}"
+}
+
+# Cleans up RAW_TEXT. Sets RESULT, REFINE_STATUS, ENGINE, the stage times, ENGINE_ERROR, ENGINE_RESETS, GUARD_REASON and
+# REJECTED (the cleanup the guard turned down).
+# REFINE_STATUS: ok (the online engine) | s1 (S1-mini selected) | s1-fallback (the online engine was unavailable) |
+#   skipped | failed-fallback-raw | guard-raw (the meaning guard used Whisper's text)
 refine_text() {
-  local t0 out
-  RESULT="$RAW_TEXT" REFINE_STATUS="skipped" CLAUDE_MS=0 S1_MS=0
+  RESULT="$RAW_TEXT" REFINE_STATUS="skipped" ENGINE=none CLAUDE_MS=0 OPENAI_MS=0 S1_MS=0
+  ENGINE_ERROR="" ENGINE_RESETS="" GUARD_REASON="" REJECTED=""
   if [[ "$REFINE" == on && "$MODE" != raw && "$(word_count "$RAW_TEXT")" -ge "$REFINE_MIN_WORDS" ]]; then
     if [[ "$CLEANUP" == s1 ]]; then
       # S1-mini has no code style: code mode keeps the raw text (post-processing still runs).
@@ -719,26 +1106,31 @@ refine_text() {
         try_s1 s1 || REFINE_STATUS="failed-fallback-raw"
       fi
     else
-      # A pre-started process means the online check already passed when recording started.
-      if [[ -n "${PRESTART_OFFLINE:-}" ]] || { [[ -z "${PRESTART_PID:-}" ]] && is_offline; }; then
-        log "OFFLINE skipping Claude"
-        REFINE_STATUS="failed-fallback-raw"
-      else
-        t0="$(now_ms)"
-        if out="$(refine "$RAW_TEXT")"; then
-          RESULT="$out"
-          REFINE_STATUS="ok"
-        else
-          REFINE_STATUS="failed-fallback-raw"
-        fi
-        CLAUDE_MS=$(($(now_ms) - t0))
-      fi
+      try_online
       if [[ "$REFINE_STATUS" == failed-fallback-raw && "$S1_FALLBACK" == on && "$MODE" != code ]] && srv_installed s1-server; then
         try_s1 s1-fallback || true
       fi
     fi
   fi
+  if [[ "$MEANING_GUARD" == on && "$REFINE_STATUS" =~ ^(ok|s1|s1-fallback)$ ]] &&
+    ! GUARD_REASON="$(meaning_guard "$RAW_TEXT" "$RESULT")"; then
+    log "GUARD the cleanup dropped $(log_safe "$GUARD_REASON"), using Whisper's text"
+    REJECTED="$(printf '%s' "$RESULT" | post_process)"
+    RESULT="$RAW_TEXT" REFINE_STATUS="guard-raw"
+  fi
   RESULT="$(printf '%s' "$RESULT" | post_process)"
+}
+
+# The guard's reason for the log: "a number (5551234)" would put dictated digits in it, so only with LOG_TEXT on.
+log_safe() { if [[ "$LOG_TEXT" == on ]]; then printf '%s' "$1"; else printf '%s' "${1%% (*}"; fi; }
+
+# The cleanup part of a log line: stage times, the outcome, and why the online engine failed.
+cleanup_timings() {
+  local line="claude=${CLAUDE_MS}ms s1=${S1_MS}ms"
+  [[ "$CLEANUP" == openai ]] && line+=" openai=${OPENAI_MS}ms"
+  line+=" refine=$REFINE_STATUS"
+  [[ -n "$ENGINE_ERROR" ]] && line+=" error=$ENGINE_ERROR"
+  printf '%s' "$line"
 }
 
 # Runs whisper + cleanup on a WAV. Sets RESULT, RAW_TEXT and TIMINGS.
@@ -746,7 +1138,7 @@ process_wav() {
   claude_prestart # starts while Whisper runs
   transcribe_wav "$1" || return 1
   refine_text
-  TIMINGS="audio=${DURATION}s whisper=${WHISPER_MS}ms claude=${CLAUDE_MS}ms s1=${S1_MS}ms refine=$REFINE_STATUS"
+  TIMINGS="audio=${DURATION}s whisper=${WHISPER_MS}ms $(cleanup_timings)"
 }
 
 log_result() {
@@ -774,7 +1166,11 @@ stop_and_process() {
   paste_text "$RESULT"
   t_end="$(now_ms)"
   log_result "total=$((t_end - t_stop))ms"
-  [[ "$REFINE" == on && "$TIMINGS" == *failed* ]] && notify "Cleanup failed, used raw transcript"
+  if [[ "$REFINE_STATUS" == guard-raw ]]; then
+    notify "Cleanup dropped $GUARD_REASON: pasted Whisper's text"
+  elif [[ "$REFINE" == on && "$TIMINGS" == *failed* ]]; then
+    notify "Cleanup failed ($ENGINE_ERROR), used raw transcript"
+  fi
   return 0
 }
 
@@ -789,6 +1185,8 @@ run_file() {
   fi
   log_result "total=$(($(now_ms) - t0))ms source=$wav"
   printf 'raw:     %s\ncleaned: %s\n%s total=%sms\n' "$RAW_TEXT" "$RESULT" "$TIMINGS" "$(($(now_ms) - t0))"
+  [[ -n "$GUARD_REASON" ]] && printf 'guard:   dropped %s, used the raw text (rejected: %s)\n' "$GUARD_REASON" "$REJECTED"
+  return 0
 }
 
 # App stage 1: print the raw transcript (empty output = no speech).
@@ -800,8 +1198,21 @@ cmd_transcribe() {
   printf '%s' "$RAW_TEXT"
 }
 
-# App stage 2: clean up stdin and print it. Exit 3 means cleanup failed and the raw text was printed;
-# exit 4 means Claude was unavailable and S1-mini cleaned it up.
+# refine's details for the app, as JSON in VTT_RESULT_FILE: status, engine, error, resets, guard, rejected, raw.
+write_result() {
+  [[ -n "$RESULT_FILE" ]] || return 0
+  local raw="$RESULT"
+  # Whisper's text as it would be pasted (dictionary, output filter), for the app's swap.
+  [[ "$REFINE_STATUS" == guard-raw || "$ENGINE" == none ]] || raw="$(printf '%s' "$RAW_TEXT" | post_process)"
+  R_STATUS="$REFINE_STATUS" R_ENGINE="$ENGINE" R_ERROR="$ENGINE_ERROR" R_RESETS="$ENGINE_RESETS" R_GUARD="$GUARD_REASON" \
+    R_REJECTED="$REJECTED" R_RAW="$raw" perl -MJSON::PP -e '
+      my %result = map { my $value = $ENV{"R_$_"} // ""; utf8::decode($value); (lc($_) => $value) }
+        qw(STATUS ENGINE ERROR RESETS GUARD REJECTED RAW);
+      print JSON::PP->new->utf8->canonical->encode(\%result);' >"$RESULT_FILE"
+}
+
+# App stage 2: clean up stdin and print it. Exit 3: cleanup failed and the raw text was printed. Exit 4: the online
+# engine was unavailable and S1-mini cleaned it up. Exit 5: the meaning guard printed Whisper's text instead.
 cmd_refine() {
   # The app runs this when recording starts and writes the transcript later: Claude starts in the meantime.
   trap claude_cleanup EXIT
@@ -809,12 +1220,14 @@ cmd_refine() {
   RAW_TEXT="$(cat)"
   [[ -n "$RAW_TEXT" ]] || return 0
   refine_text
-  log "REFINE claude=${CLAUDE_MS}ms s1=${S1_MS}ms refine=$REFINE_STATUS mode=$MODE${APP_NAME:+ app=\"$APP_NAME\"}"
+  log "REFINE $(cleanup_timings) mode=$MODE${APP_NAME:+ app=\"$APP_NAME\"}"
   [[ "$LOG_TEXT" == on && "$REFINE_STATUS" != skipped ]] && log "  cleaned: ${RESULT//$'\n'/ ⏎ }"
+  write_result
   printf '%s' "$RESULT"
   case "$REFINE_STATUS" in
     failed-fallback-raw) exit 3 ;;
     s1-fallback) exit 4 ;;
+    guard-raw) exit 5 ;;
   esac
 }
 
@@ -829,6 +1242,7 @@ selftest() {
 main() {
   local cmd="${1:-toggle}"
   load_dictionary
+  log_maintain
   case "$cmd" in
     toggle) if is_recording; then stop_and_process; else start_recording; fi ;;
     start) start_recording ;;

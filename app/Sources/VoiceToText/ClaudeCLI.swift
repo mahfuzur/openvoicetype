@@ -25,6 +25,12 @@ final class ClaudeCLI: ObservableObject {
 
     var isReady: Bool { if case .ready = status { return true } else { return false } }
 
+    /// An API key in the app's environment would make `claude -p` bill the API; `dictate.sh` and these checks drop it.
+    static var apiKeyInEnvironment: Bool {
+        let env = ProcessInfo.processInfo.environment
+        return !(env["ANTHROPIC_API_KEY"] ?? "").isEmpty || !(env["ANTHROPIC_AUTH_TOKEN"] ?? "").isEmpty
+    }
+
     private let queue = DispatchQueue(label: "VoiceToText.ClaudeCLI")
     private var checking = false
 
@@ -131,6 +137,9 @@ final class ClaudeCLI: ObservableObject {
         process.arguments = args
         process.currentDirectoryURL = URL(fileURLWithPath: "/tmp")
         var env = ProcessInfo.processInfo.environment
+        // The same login `dictate.sh` uses: an exported API key would otherwise be reported as the sign-in.
+        env["ANTHROPIC_API_KEY"] = nil
+        env["ANTHROPIC_AUTH_TOKEN"] = nil
         let dir = (executable as NSString).deletingLastPathComponent
         env["PATH"] = "\(dir):/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:" + (env["PATH"] ?? "")
         process.environment = env

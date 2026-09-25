@@ -75,12 +75,14 @@ enum SettingsSnapshots {
     static func render(to directory: URL, actions: AppActions, lastResult: LastResult, done: @escaping () -> Void) {
         try? FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
         let views: [(String, AnyView, CGSize)] = [
-            ("settings-1-general", AnyView(GeneralPane(actions: actions)), CGSize(width: 600, height: 640)),
+            ("settings-1-general", AnyView(GeneralPane(actions: actions)), CGSize(width: 600, height: 690)),
             ("settings-2-speech", AnyView(SpeechPane()), CGSize(width: 600, height: 400)),
             ("settings-3-cleanup", AnyView(CleanupPane(actions: actions)), CGSize(width: 600, height: 620)),
+            ("settings-3b-cleanup-api", AnyView(Form { APIEndpointSection() }.formStyle(.grouped)),
+             CGSize(width: 600, height: 340)),
             ("settings-4-dictionary", AnyView(DictionaryPane()), CGSize(width: 600, height: 540)),
             ("settings-5-modes", AnyView(ModesPane()), CGSize(width: 600, height: 500)),
-            ("settings-6-about", AnyView(AboutPane(actions: actions)), CGSize(width: 600, height: 520)),
+            ("settings-6-about", AnyView(AboutPane(actions: actions)), CGSize(width: 600, height: 600)),
             ("setup", AnyView(SetupView(actions: actions, lastResult: lastResult, close: {})), CGSize(width: 620, height: 760)),
         ]
         var remaining = views[...]

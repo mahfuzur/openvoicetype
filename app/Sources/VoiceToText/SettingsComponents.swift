@@ -142,27 +142,37 @@ struct ClaudeStatusView: View {
         case .missing: "Cleanup runs your own Claude Code CLI, signed in with your Claude account. No API key. "
             + "Installing runs Anthropic's official installer in Terminal."
         case .signedOut(let path, let version): "\(path) (\(version)). Sign in with your Claude account in Terminal."
-        case .ready(let path, let version, _): "\(path), version \(version)"
+        case .ready(let path, let version, _):
+            "\(path), version \(version)" + (ClaudeCLI.apiKeyInEnvironment
+                ? ". An ANTHROPIC_API_KEY is set, but cleanup ignores it and uses your Claude login." : "")
         }
     }
 }
 
 /// Click, then press the new key combination. Esc cancels, and so does leaving the window.
 struct HotKeyRecorder: View {
+    /// Which shortcut this records: dictation, or swapping the last paste.
+    enum Slot { case dictation, swap }
+    var slot: Slot = .dictation
     @ObservedObject private var settings = AppSettings.shared
     @ObservedObject private var capture = HotKeyCapture.shared
 
+    private var combo: HotKey.Combo { slot == .dictation ? settings.hotKey : settings.swapHotKey }
+    private var defaultCombo: HotKey.Combo { slot == .dictation ? HotKey.Combo.defaultCombo : HotKey.Combo.defaultSwapCombo }
+    private var error: String? { slot == .dictation ? settings.hotKeyError : settings.swapHotKeyError }
+    private var recording: Bool { settings.isRecordingHotKey && capture.slot == slot }
+
     var body: some View {
         HStack {
-            Button(action: { settings.isRecordingHotKey ? capture.stop() : capture.start() }) {
-                Text(settings.isRecordingHotKey ? "Press a shortcut…" : settings.hotKey.label)
+            Button(action: { recording ? capture.stop() : capture.start(slot) }) {
+                Text(recording ? "Press a shortcut…" : combo.label)
                     .frame(minWidth: 120)
             }
-            if settings.hotKey != HotKey.Combo.defaultCombo && !settings.isRecordingHotKey {
-                Button("Reset") { settings.hotKey = HotKey.Combo.defaultCombo }.buttonStyle(.link)
+            if combo != defaultCombo && !recording {
+                Button("Reset") { capture.set(defaultCombo, for: slot) }.buttonStyle(.link)
             }
-            if let text = capture.hint ?? settings.hotKeyError {
-                Text(text).font(.caption).foregroundColor(settings.hotKeyError != nil && capture.hint == nil ? .red : .secondary)
+            if let text = recording ? capture.hint : error {
+                Text(text).font(.caption).foregroundColor(error != nil && !recording ? .red : .secondary)
             }
         }
         // onDisappear doesn't fire when an AppKit window closes, so stop on the window events instead.
@@ -175,11 +185,13 @@ struct HotKeyRecorder: View {
 final class HotKeyCapture: ObservableObject {
     static let shared = HotKeyCapture()
     @Published private(set) var hint: String?
+    @Published private(set) var slot: HotKeyRecorder.Slot = .dictation
     private var monitor: Any?
     private let settings = AppSettings.shared
 
-    func start() {
+    func start(_ slot: HotKeyRecorder.Slot = .dictation) {
         stop()
+        self.slot = slot
         hint = "Esc to cancel"
         settings.isRecordingHotKey = true
         monitor = NSEvent.addLocalMonitorForEvents(matching: .keyDown) { [weak self] event in
@@ -187,12 +199,24 @@ final class HotKeyCapture: ObservableObject {
             if event.keyCode == 53 && event.modifierFlags.intersection([.command, .option, .control, .shift]).isEmpty {
                 self.stop()
             } else if let combo = HotKey.Combo(event: event) {
-                self.settings.hotKey = combo
-                self.stop()
+                let other = self.slot == .dictation ? self.settings.swapHotKey : self.settings.hotKey
+                if combo == other {
+                    self.hint = "\(combo.label) is already the other shortcut"
+                } else {
+                    self.set(combo, for: self.slot)
+                    self.stop()
+                }
             } else {
                 self.hint = "Use ⌃ or ⌥ with a key (⌘ shortcuts belong to apps), or a function key"
             }
             return nil
+        }
+    }
+
+    func set(_ combo: HotKey.Combo, for slot: HotKeyRecorder.Slot) {
+        switch slot {
+        case .dictation: settings.hotKey = combo
+        case .swap: settings.swapHotKey = combo
         }
     }
 

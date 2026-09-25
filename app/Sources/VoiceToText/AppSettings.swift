@@ -15,12 +15,18 @@ final class AppSettings: ObservableObject {
     @Published var isRecordingHotKey = false
     /// Set when the chosen hotkey couldn't be registered (another app owns it).
     @Published var hotKeyError: String?
+    /// Swaps the last paste between the cleaned text and Whisper's text (⌃⌥Z by default).
+    @Published var swapHotKey: HotKey.Combo { didSet { swapHotKey.save(to: defaults, prefix: "swapHotKey") } }
+    @Published var swapHotKeyError: String?
 
     @Published var refine: Bool { didSet { defaults.set(refine, forKey: "refine") } }
     @Published var claudeModel: String { didSet { defaults.set(claudeModel, forKey: "claudeModel") } }
-    /// "claude" (default) or "s1" (S1-mini, fully offline).
+    /// "claude" (default), "s1" (S1-mini, fully offline) or "openai" (an OpenAI-compatible endpoint).
     @Published var cleanupEngine: String { didSet { defaults.set(cleanupEngine, forKey: "cleanupEngine") } }
     @Published var s1Fallback: Bool { didSet { defaults.set(s1Fallback, forKey: "s1Fallback") } }
+    /// The OpenAI-compatible endpoint (Ollama, LM Studio, OpenAI, Groq, OpenRouter…); its key is in `APIKeychain`.
+    @Published var openaiBaseURL: String { didSet { defaults.set(openaiBaseURL, forKey: "openaiBaseURL") } }
+    @Published var openaiModel: String { didSet { defaults.set(openaiModel, forKey: "openaiModel") } }
 
     @Published var autoPaste: Bool { didSet { defaults.set(autoPaste, forKey: "autoPaste") } }
     @Published var richPaste: Bool { didSet { defaults.set(richPaste, forKey: "richPaste") } }
@@ -48,18 +54,24 @@ final class AppSettings: ObservableObject {
 
     @Published var setupCompleted: Bool { didSet { defaults.set(setupCompleted, forKey: "setupCompleted") } }
     @Published var checkForUpdates: Bool { didSet { defaults.set(checkForUpdates, forKey: "checkForUpdates") } }
+    /// Dictated text in the log, for debugging. Off by default: the log keeps timings and outcomes only.
+    @Published var logText: Bool { didSet { defaults.set(logText, forKey: "logText") } }
 
     var usesS1: Bool { refine && cleanupEngine == "s1" }
+    var usesAPI: Bool { refine && cleanupEngine == "openai" }
 
     private init() {
         let defaults = UserDefaults.standard // a local, so the helper below doesn't capture self before init ends
         func bool(_ key: String, _ fallback: Bool) -> Bool { defaults.object(forKey: key) as? Bool ?? fallback }
         hotKey = HotKey.Combo.load(from: defaults)
+        swapHotKey = HotKey.Combo.load(from: defaults, prefix: "swapHotKey", fallback: HotKey.Combo.defaultSwapCombo)
         holdToTalk = defaults.bool(forKey: "holdToTalk")
         refine = bool("refine", true)
         claudeModel = defaults.string(forKey: "claudeModel") ?? "haiku"
         cleanupEngine = defaults.string(forKey: "cleanupEngine") ?? "claude"
         s1Fallback = bool("s1Fallback", true)
+        openaiBaseURL = defaults.string(forKey: "openaiBaseURL") ?? "http://localhost:11434/v1"
+        openaiModel = defaults.string(forKey: "openaiModel") ?? ""
         autoPaste = bool("autoPaste", true)
         richPaste = bool("richPaste", true)
         showOverlay = bool("showOverlay", true)
@@ -77,5 +89,6 @@ final class AppSettings: ObservableObject {
         // Anyone with a Whisper model already set things up with install.sh; a new Mac starts with first-run setup.
         setupCompleted = defaults.object(forKey: "setupCompleted") as? Bool ?? ModelCatalog.whisper.contains { $0.isInstalled }
         checkForUpdates = bool("checkForUpdates", true)
+        logText = bool("logText", false)
     }
 }

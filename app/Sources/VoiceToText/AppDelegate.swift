@@ -1,5 +1,6 @@
 import AppKit
 import AVFoundation
+import Carbon
 import Combine
 import ObjCSupport
 
@@ -8,8 +9,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     private var menuBarIcon: MenuBarIcon!
     private var dictation: Dictation!
     private var hotKey: HotKey?
+    private var swapKey: HotKey?
     private var escapeKey: HotKey?
     private var lastResult: String?
+    private let history = DictationHistory()
     private let overlay = OverlayController()
     private var connectingWork: DispatchWorkItem?
 
@@ -83,6 +86,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
                                 deviceUID: pinDefault ? AudioDevices.defaultInput()?.uid : settings.inputDeviceUID)
             return
         }
+        if let index = CommandLine.arguments.firstIndex(of: "--logic-selftest"), index + 1 < CommandLine.arguments.count {
+            // For development: checks the parts of pasting that need no keystrokes, and writes one line per check.
+            let report = URL(fileURLWithPath: CommandLine.arguments[index + 1])
+            try? LogicSelfTest.run().joined(separator: "\n").appending("\n").write(to: report, atomically: true, encoding: .utf8)
+            NSApp.terminate(nil)
+            return
+        }
         if CommandLine.arguments.contains("--settings-window-test") {
             // For development: opens Settings, prints the window's content size once it has settled, and quits.
             settingsWindow.show()
@@ -123,9 +133,17 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         settings.$hotKey.dropFirst().removeDuplicates().sink { [weak self] _ in
             DispatchQueue.main.async { self?.registerHotKey() }
         }.store(in: &subscriptions)
+        settings.$swapHotKey.dropFirst().removeDuplicates().sink { [weak self] _ in
+            DispatchQueue.main.async { self?.registerHotKey() }
+        }.store(in: &subscriptions)
         settings.$isRecordingHotKey.dropFirst().removeDuplicates().sink { [weak self] recording in
             // The recorder needs the key events: a registered hotkey would swallow its own combo.
-            if recording { self?.hotKey = nil } else { DispatchQueue.main.async { self?.registerHotKey() } }
+            if recording {
+                self?.hotKey = nil
+                self?.swapKey = nil
+            } else {
+                DispatchQueue.main.async { self?.registerHotKey() }
+            }
         }.store(in: &subscriptions)
         settings.$showOverlay.dropFirst().sink { [weak self] in self?.overlay.isEnabled = $0 }.store(in: &subscriptions)
         settings.$overlayPosition.dropFirst().removeDuplicates().sink { [weak self] position in
@@ -283,33 +301,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
 
     private func finished(_ outcome: Dictation.Outcome) {
         switch outcome {
-        case .text(let text, let cleanupFailed, let offlineFallback, let context, let timing):
-            lastResult = text
-            // Rich text only helps where lists render; terminals and editors get plain text.
-            let html = settings.richPaste && context.mode != .code && RichText.containsList(text)
-                ? RichText.html(from: text) : nil
-            let pasted = Paster.paste(text, html: html, autoPaste: settings.autoPaste)
-            let modeSuffix = context.mode == .default ? "" : " · \(context.mode.title)"
-            let label: String
-            if !settings.autoPaste {
-                label = "Copied" + modeSuffix
-            } else if !pasted {
-                label = "Copied. Press ⌘V (allow Accessibility to auto-paste)"
-            } else {
-                label = (cleanupFailed ? "Pasted without cleanup" : offlineFallback ? "Pasted · cleaned offline" : "Pasted")
-                    + modeSuffix
-            }
-            AppLog.write("RESULT \(pasted ? "pasted" : "copied") mode=\(context.mode.rawValue) app=\"\(context.appName)\" "
-                + "chars=\(text.count) rich=\(html != nil) cleanupFailed=\(cleanupFailed) offlineFallback=\(offlineFallback)")
-            let total = Int(Date().timeIntervalSince(timing.stoppedAt) * 1000)
-            let engine = cleanupFailed ? "no cleanup" : offlineFallback || settings.usesS1 ? "S1-mini"
-                : settings.refine && context.mode != .raw ? "Claude" : "no cleanup"
-            lastResultModel.summary = "It worked: \(String(format: "%.1f", Double(total) / 1000)) s after you stopped, "
-                + "cleaned up with \(engine)."
-            AppLog.write("TIMING stop→transcript=\(timing.transcribeMs)ms transcript→cleaned=\(timing.cleanupMs)ms "
-                + "cleaned→pasted=\(total - timing.transcribeMs - timing.cleanupMs)ms total=\(total)ms "
-                + "prestarted=\(timing.prestarted) mode=\(context.mode.rawValue)")
-            overlay.finish(.success(label), after: pasted ? 0.9 : 2.5)
+        case .text(let result):
+            deliver(result)
         case .noSpeech:
             AppLog.write("RESULT no-speech")
             play("Funk")
@@ -322,11 +315,132 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
             AppLog.write("RESULT cancelled")
             play("Funk")
             overlay.finish(.message("Cancelled", isError: false), after: 0.8)
+        case .refused(let message):
+            AppLog.write("RESULT refused: \(message)")
+            play("Funk")
+            overlay.finish(.message(message, isError: false), after: 1.8)
         case .failed(let message):
             AppLog.write("RESULT failed: \(message)")
             play("Basso")
             overlay.finish(.message(message, isError: true), after: 2.5)
         }
+    }
+
+    /// Pastes a finished dictation, unless focus moved to another app or window (then it's copied) or a password field
+    /// has focus (then it's only kept for Copy Last). Says what happened, including why cleanup didn't run.
+    private func deliver(_ result: Dictation.Result) {
+        let text = result.text
+        let details = result.details
+        lastResult = text
+        let html = richHTML(for: text, mode: result.context.mode)
+        let check: PasteTarget.Check = settings.autoPaste ? result.target.check() : .same
+        let problem = Dictation.problemDescription(details)
+        let guarded = details.status == "guard-raw"
+        var pasted = false
+        let label: String
+        switch check {
+        case .secure:
+            label = "Not pasted: a password field has focus (see Copy Last)"
+        case .changed(let whereTo):
+            Paster.copy(text, html: html)
+            label = "Copied: you switched to \(whereTo). Press ⌘V"
+        case .same:
+            pasted = Paster.paste(text, html: html, autoPaste: settings.autoPaste)
+            let modeSuffix = result.context.mode == .default ? "" : " · \(result.context.mode.title)"
+            if !settings.autoPaste {
+                label = "Copied" + modeSuffix
+            } else if !pasted {
+                label = "Copied. Press ⌘V (allow Accessibility to auto-paste)"
+            } else if guarded {
+                label = "Pasted Whisper's text: the cleanup dropped \(details.guardReason)"
+            } else if result.offlineFallback {
+                label = "Pasted · cleaned offline" + (problem.map { " · \($0)" } ?? "")
+            } else if result.cleanupFailed {
+                label = "Pasted without cleanup" + (problem.map { " · \($0)" } ?? "")
+            } else {
+                label = "Pasted" + modeSuffix
+            }
+        }
+        let cleaned: String? = guarded ? (details.rejected.isEmpty ? nil : details.rejected)
+            : result.cleanupFailed || details.engine == "none" || details.engine.isEmpty ? nil : text
+        history.add(.init(date: Date(), appName: result.context.appName, mode: result.context.mode,
+                          raw: details.raw.isEmpty ? result.raw : details.raw, cleaned: cleaned,
+                          guardReason: guarded ? details.guardReason : nil, target: result.target,
+                          wasPasted: pasted, showingRaw: guarded || cleaned == nil))
+
+        let outcome = pasted ? "pasted" : check == .secure ? "withheld-secure" : "copied"
+        AppLog.write("RESULT \(outcome) mode=\(result.context.mode.rawValue) app=\"\(result.context.appName)\" "
+            + "chars=\(text.count) rich=\(html != nil) status=\(details.status.isEmpty ? "-" : details.status) "
+            + "engine=\(details.engine.isEmpty ? "-" : details.engine)"
+            + (details.error.isEmpty ? "" : " error=\(details.error)")
+            + (guarded ? " guard=\"\(settings.logText ? details.guardReason : details.guardReason.components(separatedBy: " (")[0])\"" : "")
+            + " target=\(checkLabel(check)) cleanupFailed=\(result.cleanupFailed) offlineFallback=\(result.offlineFallback)")
+        let timing = result.timing
+        let total = Int(Date().timeIntervalSince(timing.stoppedAt) * 1000)
+        lastResultModel.summary = "It worked: \(String(format: "%.1f", Double(total) / 1000)) s after you stopped, "
+            + "cleaned up with \(Dictation.engineName(details.engine, settings: settings))."
+        AppLog.write("TIMING stop→transcript=\(timing.transcribeMs)ms transcript→cleaned=\(timing.cleanupMs)ms "
+            + "cleaned→pasted=\(total - timing.transcribeMs - timing.cleanupMs)ms total=\(total)ms "
+            + "prestarted=\(timing.prestarted) mode=\(result.context.mode.rawValue)")
+        if check == .secure { play("Funk") }
+        let notice = check != .same || guarded || problem != nil
+        overlay.finish(check == .same && pasted && !notice ? .success(label) : .message(label, isError: false),
+                       after: pasted && !notice ? 0.9 : 3.0)
+    }
+
+    private func checkLabel(_ check: PasteTarget.Check) -> String {
+        switch check {
+        case .same: "same"
+        case .changed: "changed"
+        case .secure: "secure"
+        }
+    }
+
+    /// Rich text only helps where lists render; terminals and editors get plain text.
+    private func richHTML(for text: String, mode: DictationMode) -> String? {
+        settings.richPaste && mode != .code && RichText.containsList(text) ? RichText.html(from: text) : nil
+    }
+
+    /// ⌃⌥Z: puts the other version of the last dictation in its place, Whisper's text for the cleanup or back. Undoes the
+    /// paste (⌘Z) and pastes the other version, if the same app and window are still in front, the paste is still right
+    /// before the cursor (checked through Accessibility; where the app doesn't say, only within 30 s), and it's under 2
+    /// minutes old. Terminals and editors, where ⌘Z doesn't take a paste back, and every other case get the other version
+    /// on the clipboard instead.
+    @objc private func swapLastPaste() {
+        guard dictation.state == .idle else { return }
+        guard let last = history.last, let alternative = last.alternative else {
+            overlay.finish(.message(history.last == nil ? "No dictation to swap yet"
+                : "Nothing to swap: there's no other version", isError: false), after: 1.8)
+            return
+        }
+        let name = last.showingRaw ? "the cleaned text" : "Whisper's text"
+        let age = Date().timeIntervalSince(last.date)
+        func squeezed(_ text: String) -> String {
+            text.components(separatedBy: .whitespacesAndNewlines).filter { !$0.isEmpty }.joined(separator: " ")
+        }
+        let stillThere: Bool = {
+            let shown = squeezed(last.shown)
+            guard let before = PasteTarget.textBeforeCursor(count: last.shown.count + 40) else { return age < 30 }
+            return squeezed(before).hasSuffix(String(shown.suffix(200)))
+        }()
+        guard last.wasPasted, age < 120, settings.autoPaste, AXIsProcessTrusted(), last.mode != .code,
+              last.target.check() == .same, stillThere else {
+            Paster.copy(alternative)
+            history.swappedLast(pasted: false)
+            overlay.finish(.message("Copied \(name). Press ⌘V", isError: false), after: 2.5)
+            return
+        }
+        let html = richHTML(for: alternative, mode: last.mode)
+        Paster.whenModifiersReleased {
+            Paster.sendShortcut("z", fallback: CGKeyCode(kVK_ANSI_Z))
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.15) {
+                Paster.paste(alternative, html: html, autoPaste: true)
+            }
+        }
+        history.swappedLast(pasted: true)
+        lastResult = alternative
+        AppLog.write("SWAP to \(last.showingRaw ? "cleaned" : "raw") app=\"\(last.appName)\"")
+        overlay.finish(.success("Replaced with \(name) · \(settings.swapHotKey.label) swaps back"), after: 1.8)
     }
 
     private func play(_ sound: String) {
@@ -342,6 +456,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
 
     private func registerHotKey() {
         hotKey = nil
+        swapKey = nil
         guard !settings.isRecordingHotKey else { return }
         hotKey = HotKey(settings.hotKey, onRelease: { [weak self] in self?.hotKeyReleased() }) { [weak self] in
             self?.hotKeyPressed()
@@ -350,6 +465,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         if hotKey == nil {
             notify("\(hotKeyLabel) is used by another app. Pick a different hotkey in Settings.")
         }
+        if settings.swapHotKey != settings.hotKey {
+            swapKey = HotKey(settings.swapHotKey) { [weak self] in self?.swapLastPaste() }
+        }
+        settings.swapHotKeyError = swapKey == nil ? "\(settings.swapHotKey.label) is taken. Pick another." : nil
     }
 
     /// No speech model yet (a new Mac before setup finished): open setup instead of failing to transcribe.
@@ -396,7 +515,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         case .recording: "Recording… \(hold ? "Release" : "Press") \(hotKeyLabel) to finish, Esc to cancel"
         case .testingMic: "Testing \(dictation.deviceName)…"
         case .transcribing: "Transcribing…"
-        case .polishing: settings.usesS1 ? "Polishing with S1-mini…" : "Polishing with Claude…"
+        case .polishing: settings.usesS1 ? "Polishing with S1-mini…" : settings.usesAPI ? "Polishing with the API…"
+            : "Polishing with Claude…"
         }
         menu.addItem(disabled(status))
         if let release = updater.available {
@@ -417,9 +537,15 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         case .transcribing, .polishing: menu.addItem(disabled("Working…"))
         }
         if let lastResult {
-            let preview = lastResult.count > 50 ? String(lastResult.prefix(50)) + "…" : lastResult
-            menu.addItem(item("Copy Last: \(preview)", #selector(copyLast)))
+            menu.addItem(item("Copy Last: \(Self.preview(lastResult, 50))", #selector(copyLast)))
         }
+        if let last = history.last, last.alternative != nil {
+            let swap = item(last.showingRaw ? "Swap Last Paste to the Cleaned Text" : "Swap Last Paste to Whisper's Text",
+                            #selector(swapLastPaste))
+            swap.toolTip = "Undoes the last paste and pastes the other version (\(settings.swapHotKey.label))"
+            menu.addItem(swap)
+        }
+        if !history.entries.isEmpty { menu.addItem(historyMenuItem()) }
 
         menu.addItem(.separator())
         menu.addItem(modeMenuItem())
@@ -449,13 +575,48 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
                           checked: settings.usesS1)
         s1Item.isEnabled = installed
         menu.addItem(s1Item)
+        let apiModel = settings.openaiModel.trimmingCharacters(in: .whitespaces)
+        let apiItem = item(apiModel.isEmpty ? "API (set up in Settings)" : "API: \(apiModel)", #selector(selectAPI),
+                           checked: settings.usesAPI)
+        apiItem.isEnabled = !apiModel.isEmpty
+        menu.addItem(apiItem)
         menu.addItem(.separator())
         menu.addItem(item("Cleanup Settings…", #selector(openCleanupSettings)))
         menu.autoenablesItems = false
 
         let current = !settings.refine ? "Off" : settings.cleanupEngine == "s1" ? "S1-mini"
-            : "Claude \(settings.claudeModel.capitalized)"
+            : settings.cleanupEngine == "openai" ? "API" : "Claude \(settings.claudeModel.capitalized)"
         return submenu("Clean Up With: \(current)", menu)
+    }
+
+    /// Recent Dictations: the last 10 (in memory only), each with Copy Cleaned Text and Copy Whisper's Text.
+    private func historyMenuItem() -> NSMenuItem {
+        let menu = NSMenu()
+        let time = DateFormatter()
+        time.timeStyle = .short
+        for entry in history.entries {
+            let sub = NSMenu()
+            if let cleaned = entry.cleaned {
+                let copy = item(entry.guardReason == nil ? "Copy Cleaned Text" : "Copy Cleaned Text (turned down: it dropped \(entry.guardReason!))",
+                                #selector(copyText(_:)))
+                copy.representedObject = cleaned
+                sub.addItem(copy)
+            }
+            let raw = item("Copy Whisper's Text", #selector(copyText(_:)))
+            raw.representedObject = entry.raw
+            sub.addItem(raw)
+            let shown = entry.showingRaw ? entry.raw : entry.cleaned ?? entry.raw
+            let app = entry.appName.isEmpty ? "" : " · \(entry.appName)"
+            menu.addItem(submenu("\(time.string(from: entry.date))\(app): \(Self.preview(shown, 40))", sub))
+        }
+        menu.addItem(.separator())
+        menu.addItem(disabled("Kept in memory only, never saved to disk"))
+        return submenu("Recent Dictations", menu)
+    }
+
+    private static func preview(_ text: String, _ length: Int) -> String {
+        let line = text.replacingOccurrences(of: "\n", with: " ")
+        return line.count > length ? String(line.prefix(length)) + "…" : line
     }
 
     private func modeMenuItem() -> NSMenuItem {
@@ -553,6 +714,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         settings.refine = true
     }
 
+    @objc private func selectAPI() {
+        settings.cleanupEngine = "openai"
+        settings.refine = true
+    }
+
     @objc private func selectMode(_ sender: NSMenuItem) {
         settings.modeOverride = (sender.representedObject as? String).flatMap(DictationMode.init(rawValue:))
     }
@@ -592,8 +758,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
 
     @objc private func copyLast() {
         guard let lastResult else { return }
-        NSPasteboard.general.clearContents()
-        NSPasteboard.general.setString(lastResult, forType: .string)
+        Paster.copy(lastResult)
+    }
+
+    @objc private func copyText(_ sender: NSMenuItem) {
+        guard let text = sender.representedObject as? String else { return }
+        Paster.copy(text)
     }
 
     @objc private func quit() {
