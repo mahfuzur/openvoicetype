@@ -1,6 +1,6 @@
 # Changelog
 
-## 0.5.0 (unreleased)
+## 0.5.0 (2026-09-25)
 
 **Command Mode: edit text by voice.** Select text, press **⌃⌥⇧Space**, and say how to change it.
 

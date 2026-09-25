@@ -50,7 +50,7 @@ post-processing, rich paste, and the eval harness (`evals/`). Eval: 30% → **10
 | M4 | Settings window, first-run setup and DMG | 7–9 days | ✅ Released as v0.1.0 (2026-09-24); a test on a second Mac is still to do ([plan](plans/M4-app-and-install.md)) | Anyone can install it from a DMG with no Homebrew or Terminal, and set it up in a real window |
 | M5 | Open-source release | 2–3 days | ✅ Released as v0.2.0 (2026-09-25): renamed to **OpenVoiceType**, terms check, community files, repo renamed. The demo GIF is deferred ([plan](plans/M5-open-source-release.md)) | Name, terms check, demo, the first tagged DMG |
 | M5.4 | Trust release | 7–9 days | ✅ Released as v0.4.0 (2026-09-25) ([plan](plans/M5.4-trust-release.md)) | From an outside review: private logs, safe pasting, a guard for changed numbers and "not", an isolated Claude call with clear errors, and an OpenAI-compatible provider so cleanup doesn't depend on Claude alone |
-| M5.5 | Command Mode, on-screen context and snippets | 11–14 days | ◐ Command Mode built (2026-09-25), to release as v0.5.0 ([plan](plans/M5.5-command-mode-context-snippets.md), [research](research/2026-09-25-command-mode-and-cli.md)) | Closes the biggest gap: editing the selection by voice. v0.5.0 = Command Mode; v0.6.0 = context, snippets and Apple's on-device speech engine (macOS 26) |
+| M5.5 | Command Mode, on-screen context and snippets | 11–14 days | ◐ Command Mode released as v0.5.0 (2026-09-25); context and snippets next, in v0.6.0 ([plan](plans/M5.5-command-mode-context-snippets.md), [research](research/2026-09-25-command-mode-and-cli.md)) | Closes the biggest gap: editing the selection by voice. v0.5.0 = Command Mode; v0.6.0 = context, snippets and Apple's on-device speech engine (macOS 26) |
 | M6 | More providers | 3–4 days | Not started | Turns it into a platform: pick Codex, Gemini, Ollama or an API as well as Claude and S1-mini |
 
 M3 matters most for adoption: people don't keep using a slow dictation tool.
@@ -338,5 +338,5 @@ What's left from finished milestones, and what was moved to later (checked again
 
 M1–M5 are done: **v0.2.0 is released** under the new name (2026-09-25). Real dictations take 2.7 s (8 s of speech) to
 3.5–5.7 s (17–22 s of speech) with Claude, about 1.5 s with S1-mini. Next: the open items above (the offline test and the
-second-Mac install first), then M5.4 (the trust release, v0.4.0, done), M5.5 (Command Mode in v0.5.0, then context and snippets), then M6 (more
+second-Mac install first), then M5.4 (the trust release, v0.4.0, done), M5.5 (Command Mode in v0.5.0, done; then context and snippets), then M6 (more
 providers).
