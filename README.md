@@ -10,6 +10,7 @@
 
 <p align="center">
   <a href="https://github.com/mahfuzur/openvoicetype/releases/latest">Download for Mac</a> ·
+  <a href="https://mahfuzur.github.io/openvoicetype/">Website</a> ·
   <a href="#install">Install</a> ·
   <a href="#how-well-it-works">How well it works</a> ·
   <a href="#privacy">Privacy</a> ·

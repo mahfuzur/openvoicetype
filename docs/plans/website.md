@@ -6,7 +6,7 @@ address shows GitHub's 404, because `docs/` has no `index.html`.
 
 **Status legend:** ☐ to do · ◐ in progress · ☑ done
 
-**Status: ◐ in progress on `docs/website` (2026-09-29).**
+**Status: ☑ Done on `docs/website` (2026-09-29).** Notes from building it are in §8.
 
 **Why it matters.** People decide in a minute whether to install a dictation app that can read what they say. The site
 has to answer, on the first screen and in plain words: what it does, what leaves the Mac, how well it works (with the
@@ -66,11 +66,11 @@ scripts/preview-site.sh     builds (and serves) the site locally with the same g
 | # | Task | Status |
 |---|---|---|
 | W1 | This plan | ☑ |
-| W2 | `_config.yml`, layouts, includes, navigation, CSS, the link script | ☐ |
-| W3 | The landing page | ☐ |
-| W4 | `scripts/preview-site.sh` (bundler into `app/build/site`, `--serve`), shellcheck clean | ☐ |
-| W5 | Checks: the site builds with the github-pages gem with no errors; every internal link and image resolves; every rewritten GitHub link points to a file that exists in the repo; no third-party requests; screenshots at 1440 and 390 px wide in light and dark, looked at and fixed | ☐ |
-| W6 | Docs: README (link to the site), CONTRIBUTING (preview command), CLAUDE.md (Commands) | ☐ |
+| W2 | `_config.yml`, layouts, includes, navigation, CSS, the link script | ☑ |
+| W3 | The landing page | ☑ |
+| W4 | `scripts/preview-site.sh` (bundler into `app/build/site`, `--serve`), shellcheck clean | ☑ |
+| W5 | Checks: the site builds with the github-pages gem with no errors; every internal link and image resolves; every rewritten GitHub link points to a file that exists in the repo; no third-party requests; screenshots at 1440 and 390 px wide in light and dark, looked at and fixed | ☑ |
+| W6 | Docs: README (link to the site), CONTRIBUTING (preview command), CLAUDE.md (Commands) | ☑ |
 
 ## 6. Acceptance criteria
 
@@ -86,3 +86,20 @@ scripts/preview-site.sh     builds (and serves) the site locally with the same g
 - A custom domain, search, versioned docs.
 - A Mobbin-informed design pass (needs the Mobbin MCP set up with the maintainer's account).
 - A CI job that builds the site on every PR.
+
+## 8. Notes from building it (2026-09-29)
+
+- **Same build as GitHub.** `scripts/preview-site.sh` installs the `github-pages` gem (Jekyll 3.10 and GitHub's plugin
+  versions) into `app/build/site/vendor`, 88 MB, in about 25 s. Ruby 3.4 no longer bundles `csv`, `base64`, `bigdecimal`
+  and `logger`, so the generated Gemfile adds them.
+- **The checker** (`scripts/check-site.mjs`) found one real problem while building: its own filter skipped the diagrams
+  index. Final run: 6 pages, 356 links and images, 23 of them opening on GitHub, all resolving; no third-party loads.
+- **The overlay in the hero is HTML and CSS**, not the PNG screenshots: those have a light grey background that looked
+  wrong on the dark hero, and the rebuilt pill can step through Recording, Transcribing, Polishing and Pasted.
+  It stops moving with Reduce Motion.
+- **Looked at, and fixed:** the step icons weren't aligned; the message field collapsed while the demo recorded (it now
+  keeps its place with a placeholder); a diagram card's text sat lower than the others; "On this page" highlighted the
+  wrong section (it now follows the scroll position). The home title no longer says "keeps your words yours", which
+  overstates it when Claude is the engine.
+- **Checked in a real browser (headless Chrome):** the GitHub links resolve (a folder link opens its tree view), the
+  theme switch works and is remembered, and the demo runs through all four states. No horizontal scroll at 390 px.
