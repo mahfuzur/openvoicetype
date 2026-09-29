@@ -1,11 +1,11 @@
 #!/usr/bin/env bash
-# Builds the documentation site (docs/, published by GitHub Pages at https://mahfuzur.github.io/openvoicetype/) with the
+# Builds the documentation site (docs/, published by GitHub Pages at https://openvoicetype.mahfuzur.com/) with the
 # same github-pages gem GitHub uses, so what you see is what the merge publishes.
 #
 # Usage: scripts/preview-site.sh [--serve]
 #   (none)    build into app/build/site/_site and check it: internal links, images, and the GitHub links the site sends
 #             readers to (files outside docs/ and unpublished notes) must all exist
-#   --serve   build, then serve it at http://127.0.0.1:4000/openvoicetype/ and rebuild on changes (Ctrl-C to stop)
+#   --serve   build, then serve it at http://127.0.0.1:4000/ and rebuild on changes (Ctrl-C to stop)
 #
 # Needs Ruby 3 with Bundler. The gems install once into app/build/site/vendor (about 100 MB), not system-wide.
 

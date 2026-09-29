@@ -1,9 +1,9 @@
 # The documentation site, published by GitHub Pages from this folder (master, /docs) at
-# https://mahfuzur.github.io/openvoicetype/. Preview it with scripts/preview-site.sh.
+# https://openvoicetype.mahfuzur.com/ (the CNAME file). Preview it with scripts/preview-site.sh.
 title: OpenVoiceType
 description: Open-source dictation for macOS. Whisper transcribes on your Mac; your own Claude Code polishes the text.
 url: https://openvoicetype.mahfuzur.com
-baseurl: /
+baseurl: "" # the site is at the root of its domain
 repository: mahfuzur/openvoicetype
 repo_url: https://github.com/mahfuzur/openvoicetype
 
