@@ -304,6 +304,14 @@ env -u ANTHROPIC_API_KEY -u ANTHROPIC_AUTH_TOKEN MAX_THINKING_TOKENS=0 CLAUDE_CO
   the app icon (license); the menu-bar icon stays still and monochrome, with a red dot only while working.
 - `VoiceToText --settings-snapshots <dir>`: renders every Settings pane and the setup window to PNGs.
   `--settings-window-test` opens the real Settings window, prints its content size and quits (the first pane must fit).
+- `./scripts/preview-site.sh [--serve]`: the website (https://mahfuzur.github.io/openvoicetype/, GitHub Pages from
+  `master` `/docs`, GitHub's built-in Jekyll). Builds `docs/` with the `github-pages` gem (installed into
+  `app/build/site/vendor`) and runs `scripts/check-site.mjs`: links, images and `#anchors` resolve, links to GitHub point at
+  real files, nothing loads from another host. The Markdown files are the pages (layout from `_config.yml` defaults, no
+  front matter); `plans/` and `research/` aren't published. `assets/site.js` sends links that leave `docs/` or point at an
+  unpublished `.md` to the same path on GitHub. Only whitelisted GitHub Pages plugins work. The site loads nothing
+  third-party (no web fonts, analytics or CDNs): keep it that way. The landing page (`docs/index.html`) repeats the
+  README's numbers and claims; change both together.
 - `./scripts/render-diagrams.sh [--check] [name]`: renders `docs/diagrams/*.json` with Archify (pinned commit, fetched
   once into `~/.cache/openvoicetype/archify`; Node 18+ and Chrome) through `finalize --quality showcase --repo-root .`,
   then `visual-check` for the light/dark PNGs. Receipts go to `app/build/diagrams/`. Each diagram pins

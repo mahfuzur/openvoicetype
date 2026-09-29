@@ -1,0 +1,30 @@
+<footer class="footer">
+  <div class="footer-inner">
+    <div class="footer-brand">
+      <a class="brand" href="{{ '/' | relative_url }}">
+        <img src="{{ '/images/app-icon.png' | relative_url }}" width="24" height="24" alt="">
+        <span>OpenVoiceType</span>
+      </a>
+      <p>Open-source dictation for macOS, MIT licensed. Early software with one maintainer.</p>
+      <p class="footer-note">This site loads nothing from anyone else: no analytics, no web fonts, no trackers. Every file
+        is served from <a href="{{ site.repo_url }}/tree/master/docs">the repository</a>.</p>
+    </div>
+    <div class="footer-columns">
+      {%- for group in site.data.nav -%}
+      <div>
+        <p class="footer-heading">{{ group.title }}</p>
+        {%- for item in group.items -%}
+        <a href="{% if item.external %}{{ item.url }}{% else %}{{ item.url | relative_url }}{% endif %}">{{ item.title }}</a>
+        {%- endfor -%}
+      </div>
+      {%- endfor -%}
+    </div>
+  </div>
+  <div class="footer-inner footer-credits">
+    <p>Built on <a href="https://github.com/ggml-org/whisper.cpp">whisper.cpp</a>,
+      <a href="https://huggingface.co/superwhisper/s1-mini-GGUF">S1-mini by Superwhisper</a> and
+      <a href="https://github.com/ggml-org/llama.cpp">llama.cpp</a>. Diagrams made with
+      <a href="https://github.com/tt-a1i/archify">Archify</a>. Claude and Claude Code are Anthropic's; OpenVoiceType isn't
+      affiliated with Anthropic.</p>
+  </div>
+</footer>

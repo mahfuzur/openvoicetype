@@ -38,6 +38,7 @@ in GitHub Actions (`.github/workflows/release.yml`) and publishes it. Signing is
 | `prompts/` | Cleanup rules (`system.md`) and per-mode style (`modes/*.md`) |
 | `evals/` | The quality eval: `cases.json` (formatting and safety cases) and `run.py` |
 | `docs/` | The roadmap, detailed milestone plans, and [ARTWORK.md](docs/ARTWORK.md) (the icon and installer design) |
+| `docs/_config.yml`, `_layouts/`, `_includes/`, `_data/`, `assets/`, `index.html` | The [website](https://mahfuzur.github.io/openvoicetype/): GitHub Pages builds `docs/` with Jekyll; the Markdown files are its pages. `scripts/preview-site.sh` builds and checks it |
 | `docs/diagrams/`, `scripts/render-diagrams.sh` | [Diagrams of how the app works](docs/diagrams/README.md): JSON sources, the rendered pages and screenshots, and the script that renders them with Archify |
 
 ## Before opening a pull request
@@ -63,6 +64,10 @@ in GitHub Actions (`.github/workflows/release.yml`) and publishes it. Signing is
 7. **If your change alters something a diagram shows** (a pipeline stage, a fallback, a state, what leaves the Mac):
    update its JSON in `docs/diagrams/` and run `./scripts/render-diagrams.sh` (see
    [docs/diagrams/README.md](docs/diagrams/README.md#changing-a-diagram)).
+8. **If you changed anything in `docs/`:** it's also the [website](https://mahfuzur.github.io/openvoicetype/), published
+   on merge. Run `./scripts/preview-site.sh` (builds it with GitHub's own Jekyll and checks every link and image), or
+   `--serve` to look at it on http://127.0.0.1:4000/openvoicetype/. If you changed a number or a claim that the README
+   and the landing page (`docs/index.html`) both show, update both.
 
 ## Adding an eval case
 

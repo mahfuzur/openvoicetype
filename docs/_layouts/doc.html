@@ -1,0 +1,26 @@
+---
+layout: default
+---
+{%- assign here = page.url -%}
+<div class="doc-shell">
+  <details class="sidebar-toggle">
+    <summary>Documentation</summary>
+    {% include sidenav.html %}
+  </details>
+  <aside class="sidebar" aria-label="Documentation">
+    {% include sidenav.html %}
+  </aside>
+  <article class="doc">
+    <header class="doc-header">
+      <h1>{{ page.title }}</h1>
+      <a class="doc-source" href="{{ site.repo_url }}/blob/master/docs/{{ page.path }}">View this page on GitHub</a>
+    </header>
+    <div class="prose">
+      {{ content }}
+    </div>
+  </article>
+  <aside class="toc" aria-label="On this page" hidden>
+    <p class="toc-heading">On this page</p>
+    <nav class="toc-list"></nav>
+  </aside>
+</div>
