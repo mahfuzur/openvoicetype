@@ -38,6 +38,7 @@ in GitHub Actions (`.github/workflows/release.yml`) and publishes it. Signing is
 | `prompts/` | Cleanup rules (`system.md`) and per-mode style (`modes/*.md`) |
 | `evals/` | The quality eval: `cases.json` (formatting and safety cases) and `run.py` |
 | `docs/` | The roadmap, detailed milestone plans, and [ARTWORK.md](docs/ARTWORK.md) (the icon and installer design) |
+| `docs/diagrams/`, `scripts/render-diagrams.sh` | [Diagrams of how the app works](docs/diagrams/README.md): JSON sources, the rendered pages and screenshots, and the script that renders them with Archify |
 
 ## Before opening a pull request
 
@@ -59,6 +60,9 @@ in GitHub Actions (`.github/workflows/release.yml`) and publishes it. Signing is
    [docs/ARTWORK.md](docs/ARTWORK.md) and include before and after images.
 6. **If you changed pasting or the paste target:** run `VoiceToText --logic-selftest /tmp/logic.txt` (key codes, paste
    target, Keychain, result file, swap), then try a dictation in two apps, and switch apps while it's being prepared.
+7. **If your change alters something a diagram shows** (a pipeline stage, a fallback, a state, what leaves the Mac):
+   update its JSON in `docs/diagrams/` and run `./scripts/render-diagrams.sh` (see
+   [docs/diagrams/README.md](docs/diagrams/README.md#changing-a-diagram)).
 
 ## Adding an eval case
 

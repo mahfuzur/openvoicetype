@@ -145,7 +145,8 @@ takes 3.7 s one-shot (25/25), and about 1.2 s when it's pre-started while you sp
 ## Contributing
 
 Contributions are welcome: see [CONTRIBUTING.md](CONTRIBUTING.md) for the setup and the eval workflow, and the
-[roadmap](docs/ROADMAP.md) for what's next (on-screen context, snippets, Apple's speech engine).
+[roadmap](docs/ROADMAP.md) for what's next (on-screen context, snippets, Apple's speech engine). New to the code?
+[docs/diagrams](docs/diagrams/) shows how a dictation travels through the app, with every box linked to its source.
 
 ## Acknowledgements
 

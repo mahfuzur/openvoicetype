@@ -304,6 +304,11 @@ env -u ANTHROPIC_API_KEY -u ANTHROPIC_AUTH_TOKEN MAX_THINKING_TOKENS=0 CLAUDE_CO
   the app icon (license); the menu-bar icon stays still and monochrome, with a red dot only while working.
 - `VoiceToText --settings-snapshots <dir>`: renders every Settings pane and the setup window to PNGs.
   `--settings-window-test` opens the real Settings window, prints its content size and quits (the first pane must fit).
+- `./scripts/render-diagrams.sh [--check] [name]`: renders `docs/diagrams/*.json` with Archify (pinned commit, fetched
+  once into `~/.cache/openvoicetype/archify`; Node 18+ and Chrome) through `finalize --quality showcase --repo-root .`,
+  then `visual-check` for the light/dark PNGs. Receipts go to `app/build/diagrams/`. Each diagram pins
+  `meta.repository.revision`; its `sources` line ranges are checked against that commit, not the working tree. Screenshots
+  are only replaced when the page changed (browser captures differ slightly run to run).
 - `shellcheck scripts/*.sh`: must pass.
 
 ## App architecture (current)
