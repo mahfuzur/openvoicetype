@@ -21,6 +21,9 @@ jobs:
           python3 -m py_compile evals/run.py
           python3 -c "import json; json.load(open('evals/cases.json'))"
 
+      - name: Test the dictate.sh contract
+        run: scripts/test-dictate.sh
+
       # The bundled whisper.cpp and llama.cpp builds take a few minutes; they only change with build-deps.sh.
       - name: Cache the bundled helpers
         uses: actions/cache@v4
@@ -43,3 +46,22 @@ jobs:
         with:
           name: OpenVoiceType-app
           path: app/build/VoiceToText.app
+
+  # The Linux app (docs/plans/M7-linux.md): the same dictate.sh contract, and the Rust crates.
+  linux:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Lint shell scripts
+        run: shellcheck scripts/*.sh
+
+      - name: Test the dictate.sh contract
+        run: scripts/test-dictate.sh
+
+      - name: Check and test the Rust crates
+        working-directory: linux
+        run: |
+          cargo fmt --check
+          cargo clippy --all-targets --locked -- -D warnings
+          cargo test --locked

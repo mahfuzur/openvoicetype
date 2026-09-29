@@ -2,7 +2,7 @@
 
 *Called Voice to Text up to v0.1.1 (renamed in M5).*
 
-**Goal:** a free, open-source macOS dictation app. Press a hotkey, speak, and well-formatted text appears in
+**Goal:** a free, open-source dictation app for macOS (and Linux, from M7). Press a hotkey, speak, and well-formatted text appears in
 the focused app. Whisper runs locally, and cleanup is done by **the AI subscription the user already pays for**,
 through its CLI, with no API keys. Local models and API keys are options too.
 
@@ -52,6 +52,7 @@ post-processing, rich paste, and the eval harness (`evals/`). Eval: 30% → **10
 | M5.4 | Trust release | 7–9 days | ✅ Released as v0.4.0 (2026-09-25) ([plan](plans/M5.4-trust-release.md)) | From an outside review: private logs, safe pasting, a guard for changed numbers and "not", an isolated Claude call with clear errors, and an OpenAI-compatible provider so cleanup doesn't depend on Claude alone |
 | M5.5 | Command Mode, on-screen context and snippets | 11–14 days | ◐ Command Mode released as v0.5.0 (2026-09-25); context and snippets next, in v0.6.0 ([plan](plans/M5.5-command-mode-context-snippets.md), [research](research/2026-09-25-command-mode-and-cli.md)) | Closes the biggest gap: editing the selection by voice. v0.5.0 = Command Mode; v0.6.0 = context, snippets and Apple's on-device speech engine (macOS 26) |
 | M6 | More providers | 3–4 days | Not started | Turns it into a platform: pick Codex, Gemini, Ollama or an API as well as Claude and S1-mini |
+| M7 | Linux app | 35–50 days | ◐ P0 started (2026-09-30) ([plan](plans/M7-linux.md)) | Requested in [#14](https://github.com/mahfuzur/openvoicetype/issues/14): a native Rust + GTK4 app with full parity, sharing `dictate.sh`, the prompts and the evals |
 
 M3 matters most for adoption: people don't keep using a slow dictation tool.
 
@@ -308,6 +309,21 @@ Installed CLIs are detected automatically by resolving the user's login-shell `P
   recognition (it takes no audio).
 - **Not planned:** a custom speech recognizer or fine-tuned LLM (these need GPU servers), learning a personal writing style,
   and a dictionary that learns from your edits (reading text fields back after pasting is fragile).
+
+## M7: Linux app
+
+> **Detailed plan and task tracking:** [plans/M7-linux.md](plans/M7-linux.md).
+
+- **One pipeline:** the Linux app runs the same `dictate.sh` with the same contract as the Mac app, so prompt fixes, the meaning
+  guard and the evals cover both. The script's BSD-only commands were made portable first.
+- **Native:** Rust + GTK4/libadwaita, in `linux/`. Whisper and llama.cpp built with Vulkan (NVIDIA, AMD and Intel from one
+  build) and a CPU fallback.
+- **Desktops:** GNOME first, through a small GNOME Shell extension (hotkeys with key release, the focused window, the
+  clipboard, pasting, the overlay and the panel icon), then KDE Plasma 6.5+ (portals), wlroots (sway, Hyprland) and X11.
+  AT-SPI gives password-field detection, the selection and the caret for Swap and Command Mode.
+- **Packages:** .deb and .rpm, released together with the DMG. No Flatpak or AppImage: they can't run the host `claude` CLI
+  or install the extension.
+- **Full parity before the first release:** one release, with internal checkpoints (P0–P7).
 
 ## Decisions
 

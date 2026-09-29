@@ -25,6 +25,7 @@ import concurrent.futures as futures
 import json
 import os
 import re
+import shutil
 import statistics
 import subprocess
 import sys
@@ -74,10 +75,15 @@ def case_env(case, args, log_file):
 
 
 def synthesize(text, directory):
-    aiff = Path(directory) / "speech.aiff"
+    """Speech for --e2e: macOS `say`, or espeak-ng on Linux (a robotic voice: timings compare, word accuracy less so)."""
+    speech = Path(directory) / "speech.aiff"
     wav = Path(directory) / "speech.wav"
-    subprocess.run(["say", "-o", str(aiff), text], check=True)
-    subprocess.run(["sox", str(aiff), "-r", "16000", "-c", "1", "-b", "16", str(wav)], check=True)
+    if shutil.which("say"):
+        subprocess.run(["say", "-o", str(speech), text], check=True)
+    else:
+        speech = Path(directory) / "speech-tts.wav"
+        subprocess.run(["espeak-ng", "-w", str(speech), text], check=True)
+    subprocess.run(["sox", str(speech), "-r", "16000", "-c", "1", "-b", "16", str(wav)], check=True)
     return wav
 
 
