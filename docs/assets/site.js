@@ -2,7 +2,6 @@
 // the demo in the hero. First-party and dependency-free; the pages work without it (only the GitHub links need it).
 (() => {
   const root = document.documentElement;
-  const base = root.dataset.baseurl || "";
   const repo = "https://github.com/mahfuzur/openvoicetype/blob/master";
 
   // --- Theme: follows the system until the reader picks one; the choice is remembered on this device only.
@@ -17,19 +16,27 @@
     });
   }
 
-  // --- Links to the repository. The site is the repository's docs/ folder, so a link that leaves the site
-  // ("../README.md" from GUIDE.md) is that path in the repository, and a link to an unpublished note (plans/*.md)
-  // is docs/<path>. Both open on GitHub.
+  // --- Links to the repository. A Markdown page links to files by their path in the repository ("../README.md" from
+  // docs/GUIDE.md). Resolved against the page's own source file, a link that leaves docs/, or points at a Markdown note
+  // the site doesn't publish (plans/*.md), opens that file on GitHub. This doesn't depend on where the site is hosted.
+  const source = "docs/" + (root.dataset.source || "");
+  const sourceDir = source.slice(0, source.lastIndexOf("/") + 1);
+  const repoPath = (href) => {
+    const out = [];
+    for (const part of (sourceDir + href).split("/")) {
+      if (part === "..") out.pop();
+      else if (part !== ".") out.push(part);
+    }
+    return out.join("/");
+  };
   for (const a of document.querySelectorAll("a[href]")) {
     const raw = a.getAttribute("href");
-    if (!raw || /^(?:[a-z][a-z0-9+.-]*:|#|\/\/)/i.test(raw)) continue;
-    const url = new URL(raw, location.href);
-    if (url.origin !== location.origin) continue;
-    let target = null;
-    if (!url.pathname.startsWith(base + "/")) target = repo + url.pathname;
-    else if (/\.md$/i.test(url.pathname)) target = repo + "/docs" + url.pathname.slice(base.length);
-    if (target) {
-      a.href = target + url.hash;
+    // Only relative links: not URLs, not site-absolute paths ("/GUIDE.html"), not "#section".
+    if (!raw || /^(?:[a-z][a-z0-9+.-]*:|#|\/)/i.test(raw)) continue;
+    const [pathAndQuery, hash] = raw.split("#");
+    const path = repoPath(pathAndQuery.split("?")[0]);
+    if (!path.startsWith("docs/") || /\.md$/i.test(path)) {
+      a.href = repo + "/" + path + (hash ? "#" + hash : "");
       a.classList.add("to-github");
     }
   }
