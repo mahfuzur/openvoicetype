@@ -1,0 +1,38 @@
+# The documentation site, published by GitHub Pages from this folder (master, /docs) at
+# https://mahfuzur.github.io/openvoicetype/. Preview it with scripts/preview-site.sh.
+title: OpenVoiceType
+description: Open-source dictation for macOS. Whisper transcribes on your Mac; your own Claude Code polishes the text.
+url: https://mahfuzur.github.io
+baseurl: /openvoicetype
+repository: mahfuzur/openvoicetype
+repo_url: https://github.com/mahfuzur/openvoicetype
+
+markdown: kramdown
+kramdown:
+  input: GFM
+  hard_wrap: false
+  syntax_highlighter: rouge
+
+# All of these are enabled by GitHub Pages; listing them makes a local build behave the same.
+plugins:
+  - jekyll-relative-links
+  - jekyll-optional-front-matter
+  - jekyll-titles-from-headings
+  - jekyll-readme-index
+relative_links:
+  enabled: true
+  collections: false
+titles_from_headings:
+  enabled: true
+  strip_title: true # the layout prints the title
+
+# Working notes stay on GitHub: links to them open there (assets/site.js).
+exclude:
+  - plans
+  - research
+
+defaults:
+  - scope:
+      path: ""
+    values:
+      layout: doc

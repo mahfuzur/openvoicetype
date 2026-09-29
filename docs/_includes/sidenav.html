@@ -1,0 +1,11 @@
+{%- assign here = page.url -%}
+<nav class="sidenav">
+  {%- for group in site.data.nav -%}
+  <p class="sidenav-heading">{{ group.title }}</p>
+  <ul>
+    {%- for item in group.items -%}
+    <li><a href="{% if item.external %}{{ item.url }}{% else %}{{ item.url | relative_url }}{% endif %}"{% if item.url == here %} aria-current="page"{% endif %}>{{ item.title }}{% if item.external %}<span class="external" aria-label="(opens GitHub)">↗</span>{% endif %}</a></li>
+    {%- endfor -%}
+  </ul>
+  {%- endfor -%}
+</nav>

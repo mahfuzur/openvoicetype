@@ -1,0 +1,31 @@
+# The side navigation of the documentation pages. `url` is relative to the site; `external` opens GitHub.
+- title: Get started
+  items:
+    - title: Overview
+      url: /
+    - title: Install
+      url: /#install
+    - title: Guide
+      url: /GUIDE.html
+- title: How it works
+  items:
+    - title: Diagrams
+      url: /diagrams/
+    - title: How well it works
+      url: /#results
+    - title: Privacy
+      url: /#privacy
+- title: Project
+  items:
+    - title: Claude Code and Anthropic's terms
+      url: /TERMS.html
+    - title: Roadmap
+      url: /ROADMAP.html
+    - title: Artwork
+      url: /ARTWORK.html
+    - title: Changelog
+      url: https://github.com/mahfuzur/openvoicetype/blob/master/CHANGELOG.md
+      external: true
+    - title: Contributing
+      url: https://github.com/mahfuzur/openvoicetype/blob/master/CONTRIBUTING.md
+      external: true

@@ -1,0 +1,213 @@
+---
+layout: default
+title: OpenVoiceType
+description: Open-source dictation for macOS. Whisper transcribes on your Mac; the Claude Code you're already signed in to, an API you choose, or S1-mini offline polishes the text.
+---
+{%- assign repo = site.repo_url -%}
+<section class="hero">
+  <div class="hero-inner">
+    <div class="hero-copy">
+      <p class="eyebrow">Open source · macOS 13.3+ on Apple Silicon</p>
+      <h1>Speak anywhere on your Mac. <span class="gradient-text">Get clean text.</span></h1>
+      <p class="lede">Press a hotkey and talk. OpenVoiceType transcribes on your Mac with Whisper, cleans up the words with
+        the Claude Code you're already signed in to (or an API you choose, or fully offline), and pastes the result
+        where you were typing.</p>
+      <div class="cta">
+        <a class="button" href="{{ repo }}/releases/latest">Download for Mac</a>
+        <a class="button button-ghost" href="{{ '/GUIDE.html' | relative_url }}">Read the guide</a>
+      </div>
+      <p class="fineprint">Early software, not yet notarized by Apple: the first launch needs <strong>Open Anyway</strong>
+        (<a href="#install">how</a>). MIT licensed.</p>
+    </div>
+
+    <div class="demo" data-demo data-state="pasted" aria-label="A dictation into Slack: the spoken words, and the cleaned text that is pasted">
+      <div class="demo-window">
+        <div class="demo-titlebar"><i></i><i></i><i></i><span>Slack · #launch</span></div>
+        <div class="demo-body">
+          <p class="demo-said"><span class="demo-label">You say</span>“Um, so the budget is 15,400, no wait, 16,000 dollars,
+            and we ship on, uh, Thursday.”</p>
+          <p class="demo-typed"><span class="demo-label">It pastes</span><span class="typed">The budget is $16,000, and we ship on Thursday.<b class="caret"></b></span><span class="placeholder" aria-hidden="true">Message #launch</span></p>
+        </div>
+      </div>
+      <div class="pill" role="img" aria-label="The OpenVoiceType overlay">
+        <span class="pill-state pill-recording"><i class="rec"></i><span class="bars">{% for i in (1..14) %}<i></i>{% endfor %}</span><span class="pill-time">0:07</span></span>
+        <span class="pill-state pill-transcribing"><span class="shimmer">Transcribing…</span></span>
+        <span class="pill-state pill-polishing"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 3l1.8 5.2L19 10l-5.2 1.8L12 17l-1.8-5.2L5 10l5.2-1.8Z"/></svg><span class="shimmer">Polishing…</span></span>
+        <span class="pill-state pill-pasted"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M5 12.5l4.2 4.2L19 7"/></svg>Pasted</span>
+      </div>
+    </div>
+  </div>
+</section>
+
+<section class="facts" aria-label="At a glance">
+  <div class="facts-inner">
+    <div><strong>On your Mac</strong><span>Audio is transcribed locally and deleted. It never leaves the Mac.</span></div>
+    <div><strong>2.7 s</strong><span>from stop to pasted text, for 8 s of speech (Claude Haiku, M3 Pro)</span></div>
+    <div><strong>8 / 8</strong><span>safety cases: numbers and “not” kept, dictated instructions never obeyed</span></div>
+    <div><strong>No API key</strong><span>Works with your own Claude Code, within your plan's usage limits</span></div>
+  </div>
+</section>
+
+<section class="section" id="how">
+  <div class="section-inner">
+    <p class="kicker">How it feels</p>
+    <h2>Press, speak, and it's there.</h2>
+    <ol class="steps">
+      <li><span class="step-key"><kbd>⌃</kbd><kbd>⌥</kbd><kbd>Space</kbd></span><h3>Press the hotkey</h3>
+        <p>Or hold it while you talk. The app notes which app and window the text should go to.</p></li>
+      <li><span class="step-key step-wave" aria-hidden="true">{% for i in (1..9) %}<i></i>{% endfor %}</span><h3>Speak naturally</h3>
+        <p>Say “um”, change your mind, list things. A small overlay shows it's listening.</p></li>
+      <li><span class="step-key step-check" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="M5 12.5l4.2 4.2L19 7"/></svg></span><h3>Clean text, pasted</h3>
+        <p>Punctuation, numbers, lists and your corrections applied, where you were typing. Your clipboard comes back.</p></li>
+    </ol>
+  </div>
+</section>
+
+<section class="section section-soft" id="features">
+  <div class="section-inner">
+    <p class="kicker">What it does</p>
+    <h2>Built for how people really talk.</h2>
+    <div class="cards">
+      <article class="card"><h3>Any app</h3><p>Slack, Mail, VS Code, the terminal, the browser. If you switch away while
+        it works, the text is copied instead, and it's never pasted into a password field.</p></article>
+      <article class="card"><h3>Keeps your meaning</h3><p>Filler words and false starts go; “Friday, no wait, Thursday”
+        becomes Thursday. If a cleanup drops a number or a “not”, Whisper's own text is pasted instead.</p></article>
+      <article class="card"><h3>Command Mode</h3><p>Select text, press <kbd>⌃⌥⇧Space</kbd> and say “make this shorter”,
+        “bullet points” or “translate to Spanish”. <kbd>⌘Z</kbd> brings the original back.</p></article>
+      <article class="card"><h3>Knows the app</h3><p>Casual for chat, paragraphs for email, exact identifiers for code,
+        lists for notes. Add names and terms to the dictionary.</p></article>
+      <article class="card"><h3>Your choice of engine</h3><p>Your Claude Code (default), any OpenAI-compatible endpoint
+        (Ollama, LM Studio, OpenAI, Groq), or S1-mini by Superwhisper on your Mac, offline.</p></article>
+      <article class="card"><h3>Nothing lost</h3><p>Offline, rate-limited or signed out? S1-mini cleans up instead, and
+        failing that you get Whisper's text. <kbd>⌃⌥Z</kbd> swaps the last paste between the two.</p></article>
+    </div>
+  </div>
+</section>
+
+<section class="section" id="diagrams">
+  <div class="section-inner">
+    <p class="kicker">Nothing hidden</p>
+    <h2>See exactly how it works, down to the line of code.</h2>
+    <p class="section-lede">Six interactive diagrams trace a dictation through the app. Every box links to the source lines
+      it describes, at a pinned commit, so you can check each claim yourself. They're made with
+      <a href="https://github.com/tt-a1i/archify">Archify</a> and pass its layout and real-browser checks.</p>
+    {%- assign diagrams = "system-overview|System overview|What runs on your Mac, and what runs online;dictation-sequence|One dictation, hotkey to paste|Why the text is ready about a second after Claude gets it;cleanup-fallback|Cleanup and its fallbacks|Claude, then S1-mini, then Whisper's text: a dictation is never lost;dictation-states|The states of a dictation|From Idle to Pasted, and the six ways a dictation ends;privacy-dataflow|What leaves your Mac|Audio, text, your API key and the logs: where each one goes;command-mode-planner|What a command acts on|Selection, last text, write at the cursor, or copy only" | split: ";" -%}
+    <div class="diagram-grid">
+      {%- for entry in diagrams -%}
+      {%- assign d = entry | split: "|" -%}
+      <a class="diagram-card" href="{{ '/diagrams/' | append: d[0] | append: '.html' | relative_url }}">
+        <span class="diagram-thumb">
+          <img class="only-light" src="{{ '/diagrams/images/' | append: d[0] | append: '-light.png' | relative_url }}" alt="" loading="lazy" width="1440" height="900">
+          <img class="only-dark" src="{{ '/diagrams/images/' | append: d[0] | append: '-dark.png' | relative_url }}" alt="" loading="lazy" width="1440" height="900">
+        </span>
+        <span class="diagram-text"><strong>{{ d[1] }}</strong><span>{{ d[2] }}</span></span>
+      </a>
+      {%- endfor -%}
+    </div>
+    <p class="more"><a href="{{ '/diagrams/' | relative_url }}">All diagrams, and how to change them →</a></p>
+  </div>
+</section>
+
+<section class="section section-soft" id="results">
+  <div class="section-inner">
+    <p class="kicker">How well it works</p>
+    <h2>Measured, with the method and the caveats.</h2>
+    <p class="section-lede">On 2026-09-25, on an M3 Pro, with <a href="{{ repo }}/blob/master/evals/run.py"><code>evals/run.py</code></a>:
+      25 fixed cases. Seventeen check formatting (lists, numbers, corrections, email addresses, code); eight check safety
+      (a number or a “not” must survive, and a dictated instruction must come back as text, not be carried out).</p>
+    <div class="table-wrap">
+      <table>
+        <thead><tr><th>Cleanup engine</th><th>Formatting</th><th>Safety</th><th>Median time per cleanup</th></tr></thead>
+        <tbody>
+          <tr><td>Claude Haiku (default)</td><td>17/17 <span class="muted">(16/17 in some runs)</span></td><td>8/8</td><td>about 1.2 s pre-started, as in the app; 3.4 s with the CLI's startup</td></tr>
+          <tr><td>S1-mini, on this Mac</td><td>8/17</td><td>7/8</td><td>0.7 s</td></tr>
+          <tr><td>Ollama llama3.2 3B, on this Mac</td><td>9/17</td><td>3/8</td><td>1.8 s</td></tr>
+        </tbody>
+      </table>
+    </div>
+    <div class="split">
+      <div>
+        <h3>Speed</h3>
+        <ul>
+          <li>From stop to text: a median of <strong>2.3 s</strong> on short sentences. Real use: 2.7 s for 8 s of speech,
+            3.5–5.7 s for 17–22 s.</li>
+          <li>A plain <code>claude -p</code> call, as other apps use it: a median of 10.9 s and 22/25. OpenVoiceType's
+            isolated call: 3.7 s and 25/25 one-shot, about 1.2 s when it's pre-started while you speak.</li>
+          <li>Command Mode: 19–20 of its 20 cases on Haiku, about 3–4 s per command.</li>
+        </ul>
+      </div>
+      <div>
+        <h3>Caveats</h3>
+        <ul>
+          <li>The test speech is synthesized with macOS <code>say</code>, not recorded from real voices.</li>
+          <li>25 cases is a small set, from one maintainer's dictations.</li>
+          <li>The safety rules are a prompt plus a check for dropped numbers and negations: mitigations, not guarantees.</li>
+          <li>Small local models are much weaker; for an API engine, pick a capable model.</li>
+        </ul>
+      </div>
+    </div>
+  </div>
+</section>
+
+<section class="section" id="privacy">
+  <div class="section-inner">
+    <p class="kicker">Privacy</p>
+    <h2>Your voice stays on your Mac.</h2>
+    <div class="privacy">
+      <div class="privacy-col privacy-stays">
+        <h3>Never leaves the Mac</h3>
+        <ul>
+          <li>Your audio: recorded to a temporary file, transcribed by a local Whisper, then deleted</li>
+          <li>Your dictionary, settings and logs (logs keep timings, not your words)</li>
+          <li>API keys, kept in your Keychain</li>
+        </ul>
+      </div>
+      <div class="privacy-col privacy-sent">
+        <h3>Sent only to the engine you pick</h3>
+        <ul>
+          <li>The transcript text, with the app's name, the mode and your dictionary terms</li>
+          <li>Command Mode: the selected text and your instruction, only when you press its key</li>
+          <li>With S1-mini, or cleanup off, none of your words are sent</li>
+        </ul>
+      </div>
+      <div class="privacy-col privacy-never">
+        <h3>Never</h3>
+        <ul>
+          <li>No servers of ours, no telemetry, no analytics</li>
+          <li>Your Claude login is never read or stored; an exported <code>ANTHROPIC_API_KEY</code> is ignored, so
+            nothing quietly bills the API</li>
+          <li>One daily update check asks GitHub for the latest release (it can be turned off)</li>
+        </ul>
+      </div>
+    </div>
+    <p class="more">How it uses Claude Code, and what Anthropic's terms say: <a href="{{ '/TERMS.html' | relative_url }}">Claude Code and Anthropic's terms →</a></p>
+  </div>
+</section>
+
+<section class="section section-soft" id="install">
+  <div class="section-inner">
+    <p class="kicker">Install</p>
+    <h2>Three steps, no Terminal needed.</h2>
+    <ol class="install">
+      <li><h3>Download</h3><p>Get <code>OpenVoiceType-&lt;version&gt;.dmg</code> from the
+        <a href="{{ repo }}/releases/latest">latest release</a>, open it, and drag OpenVoiceType to Applications.</p></li>
+      <li><h3>Open Anyway, once</h3><p>The app isn't notarized by Apple yet. The first time, click <strong>Done</strong>, then
+        <strong>System Settings → Privacy &amp; Security → Open Anyway</strong>.</p></li>
+      <li><h3>Follow the setup</h3><p>Microphone and Accessibility permissions, a speech model (574 MB), and Claude Code or
+        S1-mini for the cleanup. Then dictate into the Try it box.</p></li>
+    </ol>
+    <p class="more">Requires macOS 13.3 or later on Apple Silicon. Prefer to build it yourself?
+      <a href="{{ repo }}#build-from-source">Build from source →</a></p>
+  </div>
+</section>
+
+<section class="closing">
+  <div class="section-inner closing-inner">
+    <img src="{{ '/images/app-icon.png' | relative_url }}" width="72" height="72" alt="">
+    <h2>Try it on your next message.</h2>
+    <div class="cta">
+      <a class="button" href="{{ repo }}/releases/latest">Download for Mac</a>
+      <a class="button button-ghost" href="{{ repo }}">Star or report a bug on GitHub</a>
+    </div>
+  </div>
+</section>
