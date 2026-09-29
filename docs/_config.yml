@@ -2,8 +2,8 @@
 # https://mahfuzur.github.io/openvoicetype/. Preview it with scripts/preview-site.sh.
 title: OpenVoiceType
 description: Open-source dictation for macOS. Whisper transcribes on your Mac; your own Claude Code polishes the text.
-url: https://mahfuzur.github.io
-baseurl: /openvoicetype
+url: https://openvoicetype.mahfuzur.com
+baseurl: /
 repository: mahfuzur/openvoicetype
 repo_url: https://github.com/mahfuzur/openvoicetype
 
