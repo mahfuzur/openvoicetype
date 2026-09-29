@@ -1,0 +1,139 @@
+{
+  "schema_version": 1,
+  "diagram_type": "architecture",
+  "meta": {
+    "title": "OpenVoiceType system overview",
+    "output": "docs/diagrams/system-overview.html",
+    "locale": "en",
+    "quality_profile": "showcase",
+    "repository": {
+      "url": "https://github.com/mahfuzur/openvoicetype",
+      "revision": "1fe87ef28b63b0fd0b7ab4f986b4b4026635f5d7"
+    }
+  },
+  "components": [
+    {
+      "id": "user", "type": "external", "label": "You", "sublabel": "hotkey and voice",
+      "pos": [40, 240], "size": [160, 64],
+      "sources": [{ "path": "app/Sources/VoiceToText/HotKey.swift", "line": 99, "end_line": 108, "label": "Carbon hotkey" }]
+    },
+    {
+      "id": "app", "type": "frontend", "label": "Menu-bar app", "sublabel": "AppDelegate · overlay",
+      "pos": [270, 240], "size": [160, 64],
+      "sources": [
+        { "path": "app/Sources/VoiceToText/AppDelegate.swift", "line": 507, "end_line": 517, "label": "hotKeyPressed" },
+        { "path": "app/Sources/VoiceToText/AppDelegate.swift", "line": 348, "end_line": 406, "label": "deliver" }
+      ]
+    },
+    {
+      "id": "recorder", "type": "backend", "label": "Recorder", "sublabel": "AVAudioEngine · 16 kHz WAV",
+      "pos": [540, 80], "size": [160, 64],
+      "sources": [
+        { "path": "app/Sources/VoiceToText/Recorder.swift", "line": 56, "end_line": 95, "label": "start" },
+        { "path": "app/Sources/VoiceToText/Recorder.swift", "line": 158, "end_line": 200, "label": "tap and convert" }
+      ]
+    },
+    {
+      "id": "dictation", "type": "backend", "label": "Dictation", "sublabel": "state machine · ScriptRun",
+      "pos": [540, 240], "size": [160, 64],
+      "sources": [
+        { "path": "app/Sources/VoiceToText/Dictation.swift", "line": 149, "end_line": 182, "label": "start" },
+        { "path": "app/Sources/VoiceToText/Dictation.swift", "line": 205, "end_line": 262, "label": "stop" },
+        { "path": "app/Sources/VoiceToText/Dictation.swift", "line": 492, "end_line": 544, "label": "ScriptRun" }
+      ]
+    },
+    {
+      "id": "paster", "type": "security", "label": "Paster", "sublabel": "target check · ⌘V",
+      "pos": [270, 400], "size": [160, 64],
+      "sources": [
+        { "path": "app/Sources/VoiceToText/Paster.swift", "line": 13, "end_line": 61, "label": "paste" },
+        { "path": "app/Sources/VoiceToText/PasteTarget.swift", "line": 43, "end_line": 58, "label": "check" }
+      ]
+    },
+    {
+      "id": "target", "type": "external", "label": "Focused app", "sublabel": "pinned at start",
+      "pos": [270, 560], "size": [160, 64],
+      "sources": [{ "path": "app/Sources/VoiceToText/PasteTarget.swift", "line": 23, "end_line": 40, "label": "capture" }]
+    },
+    {
+      "id": "script", "type": "backend", "label": "dictate.sh", "sublabel": "transcribe · refine · command",
+      "pos": [820, 240], "size": [168, 64],
+      "sources": [
+        { "path": "scripts/dictate.sh", "line": 1242, "end_line": 1258, "label": "cmd_refine" },
+        { "path": "scripts/dictate.sh", "line": 1125, "end_line": 1148, "label": "refine_text" },
+        { "path": "scripts/dictate.sh", "line": 1339, "end_line": 1357, "label": "main" }
+      ]
+    },
+    {
+      "id": "whisper", "type": "backend", "label": "whisper-server", "sublabel": "127.0.0.1:8179 · kept loaded",
+      "pos": [820, 80], "size": [168, 64],
+      "sources": [
+        { "path": "scripts/dictate.sh", "line": 267, "end_line": 276, "label": "transcribe_server" },
+        { "path": "scripts/dictate.sh", "line": 733, "end_line": 736, "label": "launch" },
+        { "path": "scripts/dictate.sh", "line": 244, "end_line": 263, "label": "whisper-cli fallback" }
+      ]
+    },
+    {
+      "id": "models", "type": "database", "label": "Model files", "sublabel": "~/.local/share",
+      "pos": [1080, 80], "size": [160, 64],
+      "sources": [
+        { "path": "app/Sources/VoiceToText/ModelManager.swift", "line": 22, "end_line": 49, "label": "ModelCatalog" },
+        { "path": "scripts/dictate.sh", "line": 32, "end_line": 41, "label": "default model" }
+      ]
+    },
+    {
+      "id": "s1", "type": "backend", "label": "llama-server", "sublabel": "S1-mini · 127.0.0.1:8178",
+      "pos": [820, 400], "size": [168, 64],
+      "sources": [
+        { "path": "scripts/dictate.sh", "line": 839, "end_line": 860, "label": "refine_s1" },
+        { "path": "scripts/dictate.sh", "line": 728, "end_line": 732, "label": "launch" }
+      ]
+    },
+    {
+      "id": "claude", "type": "backend", "label": "claude -p", "sublabel": "pre-started · no tools",
+      "pos": [1080, 240], "size": [160, 64],
+      "sources": [
+        { "path": "scripts/dictate.sh", "line": 442, "end_line": 452, "label": "claude_command" },
+        { "path": "scripts/dictate.sh", "line": 579, "end_line": 602, "label": "claude_prestart" },
+        { "path": "scripts/dictate.sh", "line": 609, "end_line": 641, "label": "claude_send" }
+      ]
+    },
+    {
+      "id": "anthropic", "type": "cloud", "label": "Anthropic", "sublabel": "your Claude plan",
+      "pos": [1330, 240], "size": [160, 64],
+      "sources": [
+        { "path": "scripts/dictate.sh", "line": 87, "end_line": 90, "label": "online check host" },
+        { "path": "scripts/dictate.sh", "line": 666, "end_line": 672, "label": "is_offline" }
+      ]
+    },
+    {
+      "id": "openai", "type": "cloud", "label": "OpenAI-compatible", "sublabel": "/chat/completions",
+      "pos": [1330, 400], "size": [160, 64],
+      "sources": [{ "path": "scripts/dictate.sh", "line": 953, "end_line": 1002, "label": "refine_openai" }]
+    }
+  ],
+  "boundaries": [
+    { "kind": "region", "label": "Your Mac", "wraps": ["app", "recorder", "dictation", "paster", "target", "script", "whisper", "models", "s1", "claude"], "pad": 36 },
+    { "kind": "region", "label": "OpenVoiceType.app", "wraps": ["app", "recorder", "dictation", "paster"], "pad": 14 }
+  ],
+  "connections": [
+    { "id": "press-hotkey", "from": "user", "to": "app", "label": "hotkey", "variant": "emphasis" },
+    { "id": "speak", "from": "user", "to": "recorder", "label": "voice", "fromSide": "top", "toSide": "left", "via": [[120, 112]] },
+    { "id": "start-stop", "from": "app", "to": "dictation", "label": "start · stop", "variant": "emphasis" },
+    { "id": "record", "from": "dictation", "to": "recorder", "label": "record" },
+    { "id": "run-script", "from": "dictation", "to": "script", "label": "runs stages", "variant": "emphasis" },
+    { "id": "transcribe", "from": "script", "to": "whisper", "label": "POST /inference" },
+    { "id": "load-model", "from": "whisper", "to": "models", "label": "loads model" },
+    { "id": "clean-up", "from": "script", "to": "claude", "label": "stream-json", "variant": "emphasis" },
+    { "id": "claude-https", "from": "claude", "to": "anthropic", "label": "HTTPS", "variant": "emphasis" },
+    { "id": "api-cleanup", "from": "script", "to": "openai", "label": "text + your key", "variant": "dashed" },
+    { "id": "offline-cleanup", "from": "script", "to": "s1", "label": "chosen, or fallback", "variant": "dashed" },
+    { "id": "result", "from": "dictation", "to": "paster", "label": "text" },
+    { "id": "paste", "from": "paster", "to": "target", "label": "⌘V, or copy", "variant": "security" }
+  ],
+  "cards": [
+    { "dot": "emerald", "title": "Stays on your Mac", "items": ["Audio: recorded to a temporary WAV, transcribed by whisper-server, then deleted", "whisper-server loads when you press the hotkey and unloads after 10 idle minutes; whisper-cli is the fallback", "S1-mini cleans up offline in llama-server"] },
+    { "dot": "cyan", "title": "Leaves your Mac", "items": ["Only the transcript text, to the cleanup engine you picked", "claude -p runs on your own Claude Code sign-in, started while you speak", "Or an OpenAI-compatible endpoint (a local Ollama keeps it on the Mac)"] },
+    { "dot": "rose", "title": "Safe pasting", "items": ["The target app and window are pinned when recording starts", "A changed target gets the text on the clipboard instead", "Password fields are refused"] }
+  ]
+}
