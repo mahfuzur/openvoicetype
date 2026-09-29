@@ -1,0 +1,353 @@
+{
+  "schema_version": 1,
+  "diagram_type": "sequence",
+  "meta": {
+    "title": "One dictation, from hotkey to paste",
+    "output": "docs/diagrams/dictation-sequence.html",
+    "locale": "en",
+    "viewBox": [
+      1080,
+      696
+    ],
+    "column_fit": "spread",
+    "animation": "trace",
+    "quality_profile": "showcase",
+    "repository": {
+      "url": "https://github.com/mahfuzur/openvoicetype",
+      "revision": "1fe87ef28b63b0fd0b7ab4f986b4b4026635f5d7"
+    }
+  },
+  "participants": [
+    {
+      "id": "user",
+      "type": "external",
+      "label": "You",
+      "sublabel": "hotkey and voice",
+      "sources": [
+        {
+          "path": "app/Sources/VoiceToText/AppDelegate.swift",
+          "line": 507,
+          "end_line": 517,
+          "label": "hotKeyPressed"
+        }
+      ]
+    },
+    {
+      "id": "app",
+      "type": "frontend",
+      "label": "App",
+      "sublabel": "Dictation · Recorder",
+      "sources": [
+        {
+          "path": "app/Sources/VoiceToText/Dictation.swift",
+          "line": 149,
+          "end_line": 182,
+          "label": "start"
+        },
+        {
+          "path": "app/Sources/VoiceToText/Dictation.swift",
+          "line": 386,
+          "end_line": 399,
+          "label": "prestart"
+        },
+        {
+          "path": "app/Sources/VoiceToText/Dictation.swift",
+          "line": 205,
+          "end_line": 262,
+          "label": "stop"
+        }
+      ]
+    },
+    {
+      "id": "script",
+      "type": "backend",
+      "label": "dictate.sh",
+      "sublabel": "transcribe · refine",
+      "sources": [
+        {
+          "path": "scripts/dictate.sh",
+          "line": 1219,
+          "end_line": 1225,
+          "label": "cmd_transcribe"
+        },
+        {
+          "path": "scripts/dictate.sh",
+          "line": 1242,
+          "end_line": 1258,
+          "label": "cmd_refine"
+        },
+        {
+          "path": "scripts/dictate.sh",
+          "line": 1125,
+          "end_line": 1148,
+          "label": "refine_text"
+        }
+      ]
+    },
+    {
+      "id": "whisper",
+      "type": "backend",
+      "label": "whisper-server",
+      "sublabel": "model kept loaded",
+      "sources": [
+        {
+          "path": "scripts/dictate.sh",
+          "line": 744,
+          "end_line": 777,
+          "label": "srv_start"
+        },
+        {
+          "path": "scripts/dictate.sh",
+          "line": 267,
+          "end_line": 276,
+          "label": "transcribe_server"
+        }
+      ]
+    },
+    {
+      "id": "claude",
+      "type": "cloud",
+      "label": "claude -p",
+      "sublabel": "your Claude Code",
+      "sources": [
+        {
+          "path": "scripts/dictate.sh",
+          "line": 579,
+          "end_line": 602,
+          "label": "claude_prestart"
+        },
+        {
+          "path": "scripts/dictate.sh",
+          "line": 609,
+          "end_line": 641,
+          "label": "claude_send"
+        }
+      ]
+    },
+    {
+      "id": "target",
+      "type": "external",
+      "label": "Focused app",
+      "sublabel": "where you type",
+      "sources": [
+        {
+          "path": "app/Sources/VoiceToText/PasteTarget.swift",
+          "line": 23,
+          "end_line": 58,
+          "label": "capture and check"
+        },
+        {
+          "path": "app/Sources/VoiceToText/Paster.swift",
+          "line": 13,
+          "end_line": 61,
+          "label": "paste"
+        }
+      ]
+    }
+  ],
+  "segments": [
+    {
+      "from": 172,
+      "to": 296,
+      "label": "Press: the slow parts start while you speak"
+    },
+    {
+      "from": 320,
+      "to": 418,
+      "label": "Transcribe"
+    },
+    {
+      "from": 442,
+      "to": 596,
+      "label": "Clean up and paste"
+    }
+  ],
+  "messages": [
+    {
+      "id": "press",
+      "from": "user",
+      "to": "app",
+      "y": 184,
+      "label": "press: pin app and window",
+      "variant": "emphasis"
+    },
+    {
+      "id": "launch",
+      "from": "app",
+      "to": "script",
+      "y": 208,
+      "label": "whisper-server start; refine",
+      "variant": "emphasis"
+    },
+    {
+      "id": "load-model",
+      "from": "script",
+      "to": "whisper",
+      "y": 232,
+      "label": "load model (0.6 s)",
+      "variant": "dashed"
+    },
+    {
+      "id": "prestart",
+      "from": "script",
+      "to": "claude",
+      "y": 260,
+      "label": "start claude -p early",
+      "variant": "dashed"
+    },
+    {
+      "id": "speak",
+      "from": "user",
+      "to": "app",
+      "y": 284,
+      "label": "speak, then press again",
+      "variant": "emphasis"
+    },
+    {
+      "id": "transcribe",
+      "from": "app",
+      "to": "script",
+      "y": 332,
+      "label": "transcribe <wav>"
+    },
+    {
+      "id": "inference",
+      "from": "script",
+      "to": "whisper",
+      "y": 356,
+      "label": "POST /inference + prompt",
+      "variant": "emphasis"
+    },
+    {
+      "id": "whisper-text",
+      "from": "whisper",
+      "to": "script",
+      "y": 384,
+      "label": "text",
+      "variant": "return"
+    },
+    {
+      "id": "raw",
+      "from": "script",
+      "to": "app",
+      "y": 408,
+      "label": "raw transcript",
+      "variant": "return"
+    },
+    {
+      "id": "send",
+      "from": "app",
+      "to": "script",
+      "y": 454,
+      "label": "transcript on stdin",
+      "variant": "emphasis"
+    },
+    {
+      "id": "user-message",
+      "from": "script",
+      "to": "claude",
+      "y": 478,
+      "label": "one user message",
+      "variant": "emphasis"
+    },
+    {
+      "id": "result",
+      "from": "claude",
+      "to": "script",
+      "y": 506,
+      "label": "result (about 1 s)",
+      "variant": "return"
+    },
+    {
+      "id": "cleaned",
+      "from": "script",
+      "to": "app",
+      "y": 530,
+      "label": "guarded text + result file",
+      "variant": "return"
+    },
+    {
+      "id": "paste",
+      "from": "app",
+      "to": "target",
+      "y": 558,
+      "label": "same app and window? ⌘V",
+      "variant": "security"
+    },
+    {
+      "id": "read-paste",
+      "from": "target",
+      "to": "app",
+      "y": 586,
+      "label": "reads it; clipboard restored",
+      "variant": "return"
+    }
+  ],
+  "activations": [
+    {
+      "participant": "app",
+      "from": 180,
+      "to": 592,
+      "type": "frontend"
+    },
+    {
+      "participant": "script",
+      "from": 204,
+      "to": 536,
+      "type": "backend"
+    },
+    {
+      "participant": "whisper",
+      "from": 228,
+      "to": 238,
+      "type": "backend"
+    },
+    {
+      "participant": "whisper",
+      "from": 352,
+      "to": 390,
+      "type": "backend"
+    },
+    {
+      "participant": "claude",
+      "from": 256,
+      "to": 512,
+      "type": "cloud"
+    },
+    {
+      "participant": "target",
+      "from": 554,
+      "to": 592,
+      "type": "external"
+    }
+  ],
+  "cards": [
+    {
+      "dot": "emerald",
+      "title": "Why it's fast",
+      "items": [
+        "Whisper and Claude start while you speak, not after",
+        "One Claude process per dictation, so no earlier transcript stays in its context",
+        "Stop to pasted: about 2.7 s for 8 s of speech with Claude"
+      ]
+    },
+    {
+      "dot": "orange",
+      "title": "When a step fails",
+      "items": [
+        "whisper-server down: whisper-cli transcribes instead",
+        "Claude fails or times out: S1-mini, then Whisper's own text",
+        "No speech or Esc: the waiting refine gets empty input and exits"
+      ]
+    },
+    {
+      "dot": "rose",
+      "title": "Before the paste",
+      "items": [
+        "The meaning guard keeps every number and \"not\", or uses Whisper's text",
+        "A changed app, window or title means the text is copied instead",
+        "Your clipboard comes back once the app has read the paste"
+      ]
+    }
+  ]
+}

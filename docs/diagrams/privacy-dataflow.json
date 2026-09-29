@@ -1,0 +1,386 @@
+{
+  "schema_version": 1,
+  "diagram_type": "dataflow",
+  "meta": {
+    "title": "What leaves your Mac",
+    "output": "docs/diagrams/privacy-dataflow.html",
+    "locale": "en",
+    "quality_profile": "showcase",
+    "repository": {
+      "url": "https://github.com/mahfuzur/openvoicetype",
+      "revision": "1fe87ef28b63b0fd0b7ab4f986b4b4026635f5d7"
+    },
+    "viewBox": [
+      1080,
+      600
+    ],
+    "legend": {
+      "entries": {
+        "emphasis": {
+          "label": "audio and text"
+        },
+        "security": {
+          "label": "API key"
+        },
+        "dashed": {
+          "label": "stays on the Mac"
+        },
+        "default": {
+          "label": "your settings"
+        },
+        "database": {
+          "label": "file"
+        }
+      }
+    }
+  },
+  "stages": [
+    {
+      "label": "Inputs"
+    },
+    {
+      "label": "Temporary"
+    },
+    {
+      "label": "Transcribe"
+    },
+    {
+      "label": "Build the message"
+    },
+    {
+      "label": "Where it goes"
+    }
+  ],
+  "nodes": [
+    {
+      "id": "mic",
+      "type": "external",
+      "label": "Microphone",
+      "sublabel": "AVAudioEngine",
+      "stage": 0,
+      "row": 0,
+      "sources": [
+        {
+          "path": "app/Sources/VoiceToText/Recorder.swift",
+          "line": 56,
+          "end_line": 95,
+          "label": "start"
+        }
+      ]
+    },
+    {
+      "id": "dictionary",
+      "type": "database",
+      "label": "Your dictionary",
+      "sublabel": "names and terms",
+      "stage": 0,
+      "row": 1,
+      "sources": [
+        {
+          "path": "scripts/dictate.sh",
+          "line": 278,
+          "end_line": 297,
+          "label": "load_dictionary"
+        },
+        {
+          "path": "scripts/dictate.sh",
+          "line": 305,
+          "end_line": 319,
+          "label": "vocabulary"
+        }
+      ]
+    },
+    {
+      "id": "keychain",
+      "type": "security",
+      "label": "Keychain",
+      "sublabel": "API key per host",
+      "stage": 0,
+      "row": 2,
+      "sources": [
+        {
+          "path": "app/Sources/VoiceToText/APIKeychain.swift",
+          "line": 7,
+          "end_line": 19,
+          "label": "APIKeychain"
+        },
+        {
+          "path": "app/Sources/VoiceToText/Dictation.swift",
+          "line": 462,
+          "end_line": 467,
+          "label": "one-run key file"
+        },
+        {
+          "path": "scripts/dictate.sh",
+          "line": 68,
+          "end_line": 74,
+          "label": "read and deleted"
+        }
+      ]
+    },
+    {
+      "id": "wav",
+      "type": "database",
+      "label": "Recording",
+      "sublabel": "WAV in $TMPDIR",
+      "tag": "deleted after",
+      "stage": 1,
+      "row": 0,
+      "sources": [
+        {
+          "path": "app/Sources/VoiceToText/Dictation.swift",
+          "line": 116,
+          "end_line": 117,
+          "label": "recordingURL"
+        },
+        {
+          "path": "app/Sources/VoiceToText/Dictation.swift",
+          "line": 218,
+          "end_line": 220,
+          "label": "removed"
+        }
+      ]
+    },
+    {
+      "id": "whisper",
+      "type": "backend",
+      "label": "whisper-server",
+      "sublabel": "127.0.0.1 only",
+      "stage": 2,
+      "row": 0,
+      "sources": [
+        {
+          "path": "scripts/dictate.sh",
+          "line": 267,
+          "end_line": 276,
+          "label": "transcribe_server"
+        },
+        {
+          "path": "scripts/dictate.sh",
+          "line": 733,
+          "end_line": 736,
+          "label": "--host 127.0.0.1"
+        }
+      ]
+    },
+    {
+      "id": "script",
+      "type": "backend",
+      "label": "dictate.sh refine",
+      "sublabel": "text + terms",
+      "stage": 3,
+      "row": 1,
+      "sources": [
+        {
+          "path": "scripts/dictate.sh",
+          "line": 347,
+          "end_line": 354,
+          "label": "user_message"
+        },
+        {
+          "path": "scripts/dictate.sh",
+          "line": 20,
+          "end_line": 22,
+          "label": "umask 077"
+        }
+      ]
+    },
+    {
+      "id": "claude",
+      "type": "cloud",
+      "label": "Anthropic",
+      "sublabel": "via claude CLI",
+      "stage": 4,
+      "row": 0,
+      "sources": [
+        {
+          "path": "scripts/dictate.sh",
+          "line": 442,
+          "end_line": 452,
+          "label": "API key vars dropped"
+        },
+        {
+          "path": "scripts/dictate.sh",
+          "line": 564,
+          "end_line": 566,
+          "label": "one-shot call"
+        }
+      ]
+    },
+    {
+      "id": "openai",
+      "type": "cloud",
+      "label": "Your API endpoint",
+      "sublabel": "or a local Ollama",
+      "stage": 4,
+      "row": 1,
+      "sources": [
+        {
+          "path": "scripts/dictate.sh",
+          "line": 928,
+          "end_line": 932,
+          "label": "key in a pipe"
+        },
+        {
+          "path": "scripts/dictate.sh",
+          "line": 953,
+          "end_line": 966,
+          "label": "refine_openai"
+        }
+      ]
+    },
+    {
+      "id": "s1",
+      "type": "backend",
+      "label": "S1-mini",
+      "sublabel": "local llama-server",
+      "stage": 4,
+      "row": 2,
+      "sources": [
+        {
+          "path": "scripts/dictate.sh",
+          "line": 839,
+          "end_line": 856,
+          "label": "refine_s1"
+        }
+      ]
+    },
+    {
+      "id": "logs",
+      "type": "database",
+      "label": "dictate.log",
+      "sublabel": "0600, no text",
+      "stage": 3,
+      "row": 2,
+      "sources": [
+        {
+          "path": "scripts/dictate.sh",
+          "line": 143,
+          "end_line": 166,
+          "label": "log_maintain"
+        },
+        {
+          "path": "scripts/dictate.sh",
+          "line": 1170,
+          "end_line": 1176,
+          "label": "log_result"
+        }
+      ]
+    }
+  ],
+  "flows": [
+    {
+      "id": "audio",
+      "from": "mic",
+      "to": "wav",
+      "label": "audio",
+      "classification": "stays on the Mac",
+      "variant": "emphasis"
+    },
+    {
+      "id": "wav-in",
+      "from": "wav",
+      "to": "whisper",
+      "label": "WAV",
+      "classification": "local HTTP",
+      "variant": "emphasis"
+    },
+    {
+      "id": "transcript",
+      "from": "whisper",
+      "to": "script",
+      "label": "transcript",
+      "classification": "text",
+      "variant": "emphasis"
+    },
+    {
+      "id": "vocabulary",
+      "from": "dictionary",
+      "to": "script",
+      "label": "terms",
+      "classification": "names, jargon"
+    },
+    {
+      "id": "key",
+      "from": "keychain",
+      "to": "script",
+      "label": "API key",
+      "classification": "0600 file, one run",
+      "variant": "security",
+      "toSide": "left"
+    },
+    {
+      "id": "to-claude",
+      "from": "script",
+      "to": "claude",
+      "label": "text only",
+      "variant": "emphasis",
+      "fromSide": "top",
+      "toSide": "left",
+      "via": [
+        [
+          745,
+          157
+        ]
+      ]
+    },
+    {
+      "id": "to-api",
+      "from": "script",
+      "to": "openai",
+      "label": "text + key",
+      "variant": "security",
+      "route": "straight"
+    },
+    {
+      "id": "to-s1",
+      "from": "script",
+      "to": "s1",
+      "label": "text",
+      "variant": "dashed"
+    },
+    {
+      "id": "to-log",
+      "from": "script",
+      "to": "logs",
+      "label": "timings",
+      "classification": "no text by default",
+      "variant": "dashed",
+      "fromSide": "bottom",
+      "toSide": "top",
+      "labelAt": [
+        745,
+        315
+      ]
+    }
+  ],
+  "cards": [
+    {
+      "dot": "emerald",
+      "title": "Never leaves the Mac",
+      "items": [
+        "Audio: recorded to a temporary WAV, transcribed locally, then deleted",
+        "The recording, the dictionary and the logs",
+        "With S1-mini, or cleanup off, none of your words are sent"
+      ]
+    },
+    {
+      "dot": "cyan",
+      "title": "Sent, only to the engine you pick",
+      "items": [
+        "The transcript, the app's name and mode, and your vocabulary terms",
+        "Command Mode also sends the selected text, only when you press its key",
+        "An exported ANTHROPIC_API_KEY is dropped, so dictation never bills the API"
+      ]
+    },
+    {
+      "dot": "rose",
+      "title": "Kept private",
+      "items": [
+        "API keys live in the Keychain and reach curl through a pipe, never argv",
+        "Logs keep timings and outcomes; dictated text only with LOG_TEXT=on",
+        "Once a day, one anonymous request asks GitHub for the latest release"
+      ]
+    }
+  ]
+}

@@ -1,0 +1,322 @@
+{
+  "schema_version": 2,
+  "diagram_type": "lifecycle",
+  "meta": {
+    "title": "The states of a dictation",
+    "output": "docs/diagrams/dictation-states.html",
+    "locale": "en",
+    "quality_profile": "showcase",
+    "repository": {
+      "url": "https://github.com/mahfuzur/openvoicetype",
+      "revision": "1fe87ef28b63b0fd0b7ab4f986b4b4026635f5d7"
+    }
+  },
+  "lanes": [
+    {
+      "id": "main",
+      "label": "Dictation.State"
+    },
+    {
+      "id": "stopped",
+      "label": "Stopped early"
+    },
+    {
+      "id": "terminal",
+      "label": "How it ends"
+    }
+  ],
+  "states": [
+    {
+      "id": "idle",
+      "type": "start",
+      "label": "Idle",
+      "sublabel": "waiting for the hotkey",
+      "lane": "main",
+      "col": 0,
+      "step": "01",
+      "sources": [
+        {
+          "path": "app/Sources/VoiceToText/Dictation.swift",
+          "line": 140,
+          "end_line": 147,
+          "label": "toggle"
+        }
+      ]
+    },
+    {
+      "id": "starting",
+      "type": "active",
+      "label": "Starting",
+      "sublabel": "target pinned, mic opening",
+      "lane": "main",
+      "col": 1,
+      "step": "02",
+      "sources": [
+        {
+          "path": "app/Sources/VoiceToText/Dictation.swift",
+          "line": 149,
+          "end_line": 161,
+          "label": "start"
+        }
+      ]
+    },
+    {
+      "id": "recording",
+      "type": "active",
+      "label": "Recording",
+      "sublabel": "live waveform, 5 min max",
+      "lane": "main",
+      "col": 2,
+      "step": "03",
+      "sources": [
+        {
+          "path": "app/Sources/VoiceToText/Dictation.swift",
+          "line": 162,
+          "end_line": 167,
+          "label": "onReady"
+        }
+      ]
+    },
+    {
+      "id": "transcribing",
+      "type": "active",
+      "label": "Transcribing",
+      "sublabel": "dictate.sh transcribe",
+      "lane": "main",
+      "col": 3,
+      "step": "04",
+      "sources": [
+        {
+          "path": "app/Sources/VoiceToText/Dictation.swift",
+          "line": 205,
+          "end_line": 224,
+          "label": "stop"
+        }
+      ]
+    },
+    {
+      "id": "polishing",
+      "type": "active",
+      "label": "Polishing",
+      "sublabel": "dictate.sh refine",
+      "lane": "main",
+      "col": 4,
+      "step": "05",
+      "sources": [
+        {
+          "path": "app/Sources/VoiceToText/Dictation.swift",
+          "line": 229,
+          "end_line": 261,
+          "label": "refine"
+        }
+      ]
+    },
+    {
+      "id": "refused",
+      "type": "failure",
+      "label": "Refused",
+      "sublabel": "a password field",
+      "lane": "stopped",
+      "col": 0,
+      "sources": [
+        {
+          "path": "app/Sources/VoiceToText/Dictation.swift",
+          "line": 151,
+          "end_line": 154,
+          "label": "secure field"
+        }
+      ]
+    },
+    {
+      "id": "cancelled",
+      "type": "neutral",
+      "label": "Cancelled",
+      "sublabel": "Esc, or a quick tap",
+      "lane": "stopped",
+      "col": 2,
+      "sources": [
+        {
+          "path": "app/Sources/VoiceToText/Dictation.swift",
+          "line": 264,
+          "end_line": 271,
+          "label": "cancel"
+        },
+        {
+          "path": "app/Sources/VoiceToText/AppDelegate.swift",
+          "line": 644,
+          "end_line": 655,
+          "label": "hold to talk"
+        }
+      ]
+    },
+    {
+      "id": "failed",
+      "type": "failure",
+      "label": "Failed",
+      "sublabel": "mic or Whisper error",
+      "lane": "terminal",
+      "col": 1,
+      "sources": [
+        {
+          "path": "app/Sources/VoiceToText/Dictation.swift",
+          "line": 168,
+          "end_line": 181,
+          "label": "mic failure"
+        },
+        {
+          "path": "app/Sources/VoiceToText/Dictation.swift",
+          "line": 208,
+          "end_line": 223,
+          "label": "no file, Whisper failed"
+        }
+      ]
+    },
+    {
+      "id": "nospeech",
+      "type": "neutral",
+      "label": "No speech",
+      "sublabel": "empty transcript",
+      "lane": "terminal",
+      "col": 3,
+      "sources": [
+        {
+          "path": "app/Sources/VoiceToText/Dictation.swift",
+          "line": 224,
+          "end_line": 224,
+          "label": "empty"
+        }
+      ]
+    },
+    {
+      "id": "delivered",
+      "type": "success",
+      "label": "Pasted or copied",
+      "sublabel": "the target check decides",
+      "lane": "terminal",
+      "col": 4,
+      "sources": [
+        {
+          "path": "app/Sources/VoiceToText/AppDelegate.swift",
+          "line": 348,
+          "end_line": 406,
+          "label": "deliver"
+        }
+      ]
+    }
+  ],
+  "transitions": [
+    {
+      "id": "press",
+      "from": "idle",
+      "to": "starting",
+      "label": "hotkey",
+      "variant": "emphasis"
+    },
+    {
+      "id": "mic-ready",
+      "from": "starting",
+      "to": "recording",
+      "label": "first audio",
+      "variant": "emphasis"
+    },
+    {
+      "id": "stop",
+      "from": "recording",
+      "to": "transcribing",
+      "label": "stop",
+      "variant": "emphasis"
+    },
+    {
+      "id": "transcript",
+      "from": "transcribing",
+      "to": "polishing",
+      "label": "text",
+      "variant": "emphasis"
+    },
+    {
+      "id": "text-ready",
+      "from": "polishing",
+      "to": "delivered",
+      "label": "text ready",
+      "variant": "emphasis"
+    },
+    {
+      "id": "password",
+      "from": "idle",
+      "to": "refused",
+      "label": "secure field",
+      "variant": "security"
+    },
+    {
+      "id": "cancel-starting",
+      "from": "starting",
+      "to": "cancelled",
+      "label": "Esc",
+      "variant": "dashed"
+    },
+    {
+      "id": "cancel-recording",
+      "from": "recording",
+      "to": "cancelled",
+      "label": "Esc",
+      "variant": "dashed"
+    },
+    {
+      "id": "mic-failed",
+      "from": "starting",
+      "to": "failed",
+      "label": "mic error",
+      "variant": "security"
+    },
+    {
+      "id": "whisper-failed",
+      "from": "transcribing",
+      "to": "failed",
+      "label": "failed",
+      "variant": "security"
+    },
+    {
+      "id": "no-speech",
+      "from": "transcribing",
+      "to": "nospeech",
+      "label": "empty",
+      "variant": "dashed"
+    },
+    {
+      "id": "cleanup-off",
+      "from": "transcribing",
+      "to": "delivered",
+      "label": "cleanup off",
+      "variant": "dashed"
+    }
+  ],
+  "cards": [
+    {
+      "dot": "emerald",
+      "title": "The main path",
+      "items": [
+        "Idle to Pasted: hotkey, first audio, stop, transcript, cleaned text",
+        "whisper-server and a waiting refine start in Starting, so the later states are short",
+        "With cleanup off or in Raw mode, Transcribing goes straight to the paste (refine still applies the dictionary)"
+      ]
+    },
+    {
+      "dot": "amber",
+      "title": "Stopping early",
+      "items": [
+        "Esc or a second press while the mic opens cancels",
+        "Hold to Talk: a press under 0.3 s is a tap, and cancels",
+        "A mic that drops out mid-dictation stops, and what was captured is transcribed"
+      ]
+    },
+    {
+      "dot": "slate",
+      "title": "After every ending",
+      "items": [
+        "The state returns to Idle, and the overlay says what happened",
+        "A waiting refine gets empty input and exits, so its Claude does too",
+        "Command Mode uses the same states; the overlay says Editing while it polishes"
+      ]
+    }
+  ]
+}

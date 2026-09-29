@@ -133,6 +133,8 @@ hotkey ─► note where the text should go (app, window, mode)
        ─► paste at the cursor if focus didn't move (⌘V; your clipboard comes back once the app has read the paste)
 ```
 
+- **Diagrams:** [docs/diagrams](diagrams/) draws this pipeline, the cleanup fallbacks, the dictation states, what leaves
+  your Mac, and how Command Mode picks what to change.
 - **Prompts** live in [`prompts/`](../prompts/): the core rules are in `system.md`, and each mode has a file in `modes/`.
 - **Claude** runs as your own `claude` CLI in print mode, from a neutral folder, with no tools, no MCP servers and
   `--safe-mode`. That keeps your personal CLAUDE.md, memory, skills and hooks out of every dictation. An exported

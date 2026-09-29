@@ -1,0 +1,359 @@
+{
+  "schema_version": 2,
+  "diagram_type": "workflow",
+  "meta": {
+    "title": "Cleanup: which engine, and what if it fails",
+    "output": "docs/diagrams/cleanup-fallback.html",
+    "locale": "en",
+    "animation": "trace",
+    "quality_profile": "showcase",
+    "repository": {
+      "url": "https://github.com/mahfuzur/openvoicetype",
+      "revision": "1fe87ef28b63b0fd0b7ab4f986b4b4026635f5d7"
+    },
+    "viewBox": [
+      1100,
+      696
+    ],
+    "legend": {
+      "entries": {
+        "external": {
+          "label": "Input"
+        },
+        "security": {
+          "label": "Check"
+        },
+        "cloud": {
+          "label": "Online engine"
+        },
+        "backend": {
+          "label": "Local step"
+        },
+        "messagebus": {
+          "label": "Fallback"
+        }
+      }
+    }
+  },
+  "lanes": [
+    {
+      "id": "online",
+      "label": "Online engine"
+    },
+    {
+      "id": "pipeline",
+      "label": "dictate.sh refine"
+    },
+    {
+      "id": "local",
+      "label": "On this Mac"
+    },
+    {
+      "id": "fallback",
+      "label": "Last resort",
+      "variant": "exception"
+    }
+  ],
+  "phases": [
+    {
+      "id": "gate",
+      "label": "Decide",
+      "fromCol": 0,
+      "toCol": 1
+    },
+    {
+      "id": "engines",
+      "label": "Clean up",
+      "fromCol": 2,
+      "toCol": 3,
+      "variant": "emphasis"
+    },
+    {
+      "id": "checks",
+      "label": "Check and finish",
+      "fromCol": 4,
+      "toCol": 5,
+      "variant": "security"
+    }
+  ],
+  "mainPath": [
+    "raw",
+    "gate",
+    "claude",
+    "guard",
+    "post"
+  ],
+  "nodes": [
+    {
+      "id": "raw",
+      "lane": "pipeline",
+      "col": 0,
+      "type": "external",
+      "label": "Transcript",
+      "sublabel": "Whisper's text on stdin",
+      "width": 160,
+      "sources": [
+        {
+          "path": "scripts/dictate.sh",
+          "line": 1242,
+          "end_line": 1248,
+          "label": "cmd_refine"
+        }
+      ]
+    },
+    {
+      "id": "gate",
+      "lane": "pipeline",
+      "col": 1,
+      "type": "security",
+      "label": "Clean up?",
+      "sublabel": "on, not Raw, 4+ words",
+      "width": 160,
+      "sources": [
+        {
+          "path": "scripts/dictate.sh",
+          "line": 1125,
+          "end_line": 1140,
+          "label": "refine_text"
+        }
+      ]
+    },
+    {
+      "id": "claude",
+      "lane": "online",
+      "col": 2,
+      "type": "cloud",
+      "label": "Claude or API",
+      "sublabel": "after a 1 s online check",
+      "tag": "exit 0",
+      "width": 160,
+      "sources": [
+        {
+          "path": "scripts/dictate.sh",
+          "line": 1083,
+          "end_line": 1119,
+          "label": "try_online"
+        },
+        {
+          "path": "scripts/dictate.sh",
+          "line": 662,
+          "end_line": 672,
+          "label": "is_offline"
+        },
+        {
+          "path": "scripts/dictate.sh",
+          "line": 544,
+          "end_line": 572,
+          "label": "refine"
+        }
+      ]
+    },
+    {
+      "id": "s1",
+      "lane": "local",
+      "col": 3,
+      "type": "backend",
+      "label": "S1-mini",
+      "sublabel": "llama-server, 10 s",
+      "tag": "exit 4 as fallback",
+      "width": 160,
+      "sources": [
+        {
+          "path": "scripts/dictate.sh",
+          "line": 1129,
+          "end_line": 1139,
+          "label": "engine choice"
+        },
+        {
+          "path": "scripts/dictate.sh",
+          "line": 1056,
+          "end_line": 1064,
+          "label": "try_s1"
+        },
+        {
+          "path": "scripts/dictate.sh",
+          "line": 839,
+          "end_line": 860,
+          "label": "refine_s1"
+        }
+      ]
+    },
+    {
+      "id": "guard",
+      "lane": "pipeline",
+      "col": 4,
+      "type": "security",
+      "label": "Meaning guard",
+      "sublabel": "numbers and \"not\" kept?",
+      "width": 160,
+      "sources": [
+        {
+          "path": "scripts/dictate.sh",
+          "line": 1141,
+          "end_line": 1146,
+          "label": "applied"
+        },
+        {
+          "path": "scripts/dictate.sh",
+          "line": 1010,
+          "end_line": 1051,
+          "label": "meaning_guard"
+        }
+      ]
+    },
+    {
+      "id": "post",
+      "lane": "pipeline",
+      "col": 5,
+      "type": "backend",
+      "label": "post_process",
+      "sublabel": "dictionary, filters",
+      "tag": "pasted",
+      "width": 160,
+      "sources": [
+        {
+          "path": "scripts/dictate.sh",
+          "line": 1147,
+          "end_line": 1147,
+          "label": "always runs"
+        },
+        {
+          "path": "scripts/dictate.sh",
+          "line": 361,
+          "end_line": 408,
+          "label": "post_process"
+        }
+      ]
+    },
+    {
+      "id": "whisper",
+      "lane": "fallback",
+      "col": 4,
+      "type": "messagebus",
+      "label": "Whisper's text",
+      "sublabel": "post-processed, pasted",
+      "tag": "exit 3 or 5",
+      "width": 160,
+      "sources": [
+        {
+          "path": "scripts/dictate.sh",
+          "line": 1126,
+          "end_line": 1127,
+          "label": "default result"
+        },
+        {
+          "path": "scripts/dictate.sh",
+          "line": 1253,
+          "end_line": 1257,
+          "label": "exit codes"
+        }
+      ]
+    }
+  ],
+  "edges": [
+    {
+      "id": "read-transcript",
+      "from": "raw",
+      "to": "gate",
+      "role": "main",
+      "variant": "emphasis"
+    },
+    {
+      "id": "choose-online",
+      "from": "gate",
+      "to": "claude",
+      "label": "claude or openai",
+      "role": "main",
+      "variant": "emphasis",
+      "fromSide": "top",
+      "toSide": "left"
+    },
+    {
+      "id": "cleaned",
+      "from": "claude",
+      "to": "guard",
+      "label": "cleaned",
+      "role": "main",
+      "variant": "emphasis"
+    },
+    {
+      "id": "guard-passed",
+      "from": "guard",
+      "to": "post",
+      "label": "kept",
+      "role": "main",
+      "variant": "emphasis"
+    },
+    {
+      "id": "choose-s1",
+      "from": "gate",
+      "to": "s1",
+      "label": "CLEANUP=s1",
+      "role": "branch",
+      "variant": "dashed"
+    },
+    {
+      "id": "online-failed",
+      "from": "claude",
+      "to": "s1",
+      "label": "offline, limit, sign-in, timeout",
+      "role": "error",
+      "variant": "security",
+      "fromSide": "bottom",
+      "toSide": "top"
+    },
+    {
+      "id": "s1-cleaned",
+      "from": "s1",
+      "to": "guard",
+      "label": "cleaned",
+      "role": "branch"
+    },
+    {
+      "id": "s1-failed",
+      "from": "s1",
+      "to": "whisper",
+      "label": "failed",
+      "role": "error",
+      "variant": "security"
+    },
+    {
+      "id": "guard-dropped",
+      "from": "guard",
+      "to": "whisper",
+      "label": "dropped one",
+      "role": "error",
+      "variant": "security"
+    }
+  ],
+  "cards": [
+    {
+      "dot": "cyan",
+      "title": "Exit codes the app reads",
+      "items": [
+        "0: cleaned by the engine you chose",
+        "3: Whisper's text (cleanup failed)",
+        "4: S1-mini stood in for the online engine",
+        "5: the meaning guard used Whisper's text"
+      ]
+    },
+    {
+      "dot": "amber",
+      "title": "Why a fallback is quick",
+      "items": [
+        "The online check fails in about 1 s, so a dead connection doesn't wait for Claude's 15 s timeout",
+        "A usage limit or sign-in error ends the wait at once",
+        "The app stops a stuck refine after 45 s"
+      ]
+    },
+    {
+      "dot": "rose",
+      "title": "Where it's different",
+      "items": [
+        "Cleanup off, Raw mode or under 4 words: no engine, only post_process",
+        "Code mode never uses S1-mini",
+        "Command Mode: Claude or the API only, with no S1-mini and no meaning guard"
+      ]
+    }
+  ]
+}

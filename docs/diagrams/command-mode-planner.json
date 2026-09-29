@@ -1,0 +1,328 @@
+{
+  "schema_version": 2,
+  "diagram_type": "workflow",
+  "meta": {
+    "title": "Command Mode: what a press acts on",
+    "output": "docs/diagrams/command-mode-planner.html",
+    "locale": "en",
+    "quality_profile": "showcase",
+    "repository": {
+      "url": "https://github.com/mahfuzur/openvoicetype",
+      "revision": "1fe87ef28b63b0fd0b7ab4f986b4b4026635f5d7"
+    },
+    "legend": {
+      "entries": {
+        "external": {
+          "label": "You"
+        },
+        "backend": {
+          "label": "Reads"
+        },
+        "security": {
+          "label": "Decision"
+        },
+        "frontend": {
+          "label": "Changes the text"
+        },
+        "messagebus": {
+          "label": "Clipboard only"
+        }
+      }
+    }
+  },
+  "lanes": [
+    {
+      "id": "you",
+      "label": "You"
+    },
+    {
+      "id": "plan",
+      "label": "CommandPlanner.decide"
+    },
+    {
+      "id": "edit",
+      "label": "Changes the text"
+    },
+    {
+      "id": "copy",
+      "label": "Nothing is replaced",
+      "variant": "exception"
+    }
+  ],
+  "mainPath": [
+    "press",
+    "read",
+    "selected",
+    "replace"
+  ],
+  "nodes": [
+    {
+      "id": "press",
+      "lane": "you",
+      "col": 0,
+      "type": "external",
+      "label": "⌃⌥⇧Space",
+      "sublabel": "recording starts too",
+      "width": 150,
+      "sources": [
+        {
+          "path": "app/Sources/VoiceToText/AppDelegate.swift",
+          "line": 523,
+          "end_line": 545,
+          "label": "startCommand"
+        }
+      ]
+    },
+    {
+      "id": "read",
+      "lane": "plan",
+      "col": 1,
+      "type": "backend",
+      "label": "Read the selection",
+      "sublabel": "AX, Edit ▸ Copy, ⌘C",
+      "width": 150,
+      "sources": [
+        {
+          "path": "app/Sources/VoiceToText/SelectionReader.swift",
+          "line": 32,
+          "end_line": 41,
+          "label": "read"
+        },
+        {
+          "path": "app/Sources/VoiceToText/SelectionReader.swift",
+          "line": 65,
+          "end_line": 92,
+          "label": "readNow"
+        }
+      ]
+    },
+    {
+      "id": "selected",
+      "lane": "plan",
+      "col": 2,
+      "type": "security",
+      "label": "Text selected?",
+      "sublabel": "up to 6,000 characters",
+      "width": 150,
+      "sources": [
+        {
+          "path": "app/Sources/VoiceToText/CommandMode.swift",
+          "line": 94,
+          "end_line": 117,
+          "label": "selection"
+        }
+      ]
+    },
+    {
+      "id": "again",
+      "lane": "plan",
+      "col": 3,
+      "type": "security",
+      "label": "Last text at cursor?",
+      "sublabel": "pasted in the last 60 s",
+      "width": 150,
+      "sources": [
+        {
+          "path": "app/Sources/VoiceToText/CommandMode.swift",
+          "line": 119,
+          "end_line": 146,
+          "label": "reselect"
+        }
+      ]
+    },
+    {
+      "id": "field",
+      "lane": "plan",
+      "col": 4,
+      "type": "security",
+      "label": "In a text field?",
+      "sublabel": "and not a terminal",
+      "width": 150,
+      "sources": [
+        {
+          "path": "app/Sources/VoiceToText/CommandMode.swift",
+          "line": 148,
+          "end_line": 152,
+          "label": "write or copy"
+        }
+      ]
+    },
+    {
+      "id": "replace",
+      "lane": "edit",
+      "col": 2,
+      "type": "frontend",
+      "label": "Replace selection",
+      "sublabel": "copied if read-only",
+      "width": 150,
+      "sources": [
+        {
+          "path": "app/Sources/VoiceToText/CommandMode.swift",
+          "line": 99,
+          "end_line": 110,
+          "label": "selection"
+        }
+      ]
+    },
+    {
+      "id": "relast",
+      "lane": "edit",
+      "col": 3,
+      "type": "frontend",
+      "label": "Replace last text",
+      "sublabel": "result or dictation",
+      "width": 150,
+      "sources": [
+        {
+          "path": "app/Sources/VoiceToText/CommandMode.swift",
+          "line": 128,
+          "end_line": 143,
+          "label": "last result, dictation"
+        },
+        {
+          "path": "app/Sources/VoiceToText/PasteTarget.swift",
+          "line": 76,
+          "end_line": 93,
+          "label": "selectBeforeCursor"
+        }
+      ]
+    },
+    {
+      "id": "write",
+      "lane": "edit",
+      "col": 4,
+      "type": "frontend",
+      "label": "Write at cursor",
+      "sublabel": "new text",
+      "width": 150,
+      "sources": [
+        {
+          "path": "app/Sources/VoiceToText/CommandMode.swift",
+          "line": 148,
+          "end_line": 152,
+          "label": "write"
+        }
+      ]
+    },
+    {
+      "id": "copy",
+      "lane": "copy",
+      "col": 5,
+      "type": "messagebus",
+      "label": "Copy only",
+      "sublabel": "answer on the clipboard",
+      "width": 150,
+      "sources": [
+        {
+          "path": "app/Sources/VoiceToText/CommandMode.swift",
+          "line": 112,
+          "end_line": 117,
+          "label": "unreadable"
+        },
+        {
+          "path": "app/Sources/VoiceToText/CommandMode.swift",
+          "line": 149,
+          "end_line": 150,
+          "label": "no text field"
+        }
+      ]
+    }
+  ],
+  "edges": [
+    {
+      "id": "start",
+      "from": "press",
+      "to": "read",
+      "role": "main",
+      "variant": "emphasis"
+    },
+    {
+      "id": "check-selection",
+      "from": "read",
+      "to": "selected",
+      "role": "main",
+      "variant": "emphasis"
+    },
+    {
+      "id": "has-selection",
+      "from": "selected",
+      "to": "replace",
+      "label": "yes",
+      "role": "main",
+      "variant": "emphasis"
+    },
+    {
+      "id": "nothing",
+      "from": "selected",
+      "to": "again",
+      "label": "nothing",
+      "role": "branch"
+    },
+    {
+      "id": "unreadable",
+      "from": "read",
+      "to": "copy",
+      "label": "couldn’t read",
+      "role": "branch",
+      "variant": "dashed"
+    },
+    {
+      "id": "reselect",
+      "from": "again",
+      "to": "relast",
+      "label": "yes",
+      "role": "branch"
+    },
+    {
+      "id": "no-last",
+      "from": "again",
+      "to": "field",
+      "label": "no",
+      "role": "branch"
+    },
+    {
+      "id": "in-field",
+      "from": "field",
+      "to": "write",
+      "label": "yes",
+      "role": "branch"
+    },
+    {
+      "id": "no-field",
+      "from": "field",
+      "to": "copy",
+      "label": "no",
+      "role": "branch",
+      "variant": "dashed"
+    }
+  ],
+  "cards": [
+    {
+      "dot": "cyan",
+      "title": "The overlay says it first",
+      "items": [
+        "\"12 words selected\", \"Follow-up\", \"Last dictation\", \"Write at cursor\" or \"Copy only\"",
+        "Shown while you are still speaking the instruction",
+        "A selection over 6,000 characters is refused"
+      ]
+    },
+    {
+      "dot": "rose",
+      "title": "Before anything is replaced",
+      "items": [
+        "The same app and window must still be in front",
+        "The same text must still be selected, or the answer is copied",
+        "A replace is one paste, so ⌘Z brings the original back"
+      ]
+    },
+    {
+      "dot": "emerald",
+      "title": "Follow-ups",
+      "items": [
+        "Select the result again, or press within a minute: \"shorter still\"",
+        "Menu → Restore Original Text works for 5 minutes",
+        "Sessions are in memory only"
+      ]
+    }
+  ]
+}
