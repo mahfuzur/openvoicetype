@@ -1,9 +1,9 @@
-#!/usr/bin/env python3
+#!/usr/bin/python3
 """OpenVoiceType P1 spike 1, on a real GNOME desktop: does the extension do what the Linux app needs?
 
 Run it in a terminal after installing the extension (see install.sh) and logging out and in once:
 
-    python3 linux/spikes/gnome-shell/spike.py
+    /usr/bin/python3 linux/spikes/gnome-shell/spike.py
 
 It asks you to do one thing at a time (click a window, hold a key...), checks what the extension reports, and writes
 ~/openvoicetype-spike1.txt. Send that file back. Nothing is recorded or sent anywhere.
@@ -15,7 +15,12 @@ import subprocess
 import sys
 import time
 
-from gi.repository import Gio, GLib
+try:
+    from gi.repository import Gio, GLib
+except ImportError:
+    sys.exit("This python3 has no GNOME bindings (gi). Run it with Ubuntu's own Python:\n"
+             "    /usr/bin/python3 linux/spikes/gnome-shell/spike.py\n"
+             "(if that fails too: sudo apt install python3-gi)")
 
 BUS_NAME = "io.github.mahfuzur.OpenVoiceType.Shell"
 PATH = "/io/github/mahfuzur/OpenVoiceType/Shell"
@@ -54,7 +59,7 @@ try:
     proxy = Gio.DBusProxy.new_sync(bus, 0, None, BUS_NAME, PATH, BUS_NAME)
     proxy.call_sync("GetVersion", None, 0, 2000, None)
 except GLib.Error as error:
-    print("The extension isn't running. Did you run install.sh, log out and back in, and enable it?")
+    print("The extension isn't running. Run install.sh, log out and back in, then enable it:")
     print(f"    gnome-extensions enable openvoicetype-spike@mahfuzur.github.io\n({error.message})")
     sys.exit(1)
 

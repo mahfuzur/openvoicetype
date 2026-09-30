@@ -5,7 +5,7 @@
 #   bash linux/spikes/gnome-shell/install.sh
 #   (log out, log in)
 #   gnome-extensions enable openvoicetype-spike@mahfuzur.github.io
-#   python3 linux/spikes/gnome-shell/spike.py
+#   /usr/bin/python3 linux/spikes/gnome-shell/spike.py
 set -euo pipefail
 
 UUID=openvoicetype-spike@mahfuzur.github.io
@@ -27,9 +27,10 @@ cp -r "$SOURCE" "$TARGET"
 gsettings set org.gnome.shell disable-user-extensions false
 echo "Installed $TARGET"
 if gnome-extensions enable "$UUID" 2>/dev/null && gnome-extensions info "$UUID" 2>/dev/null | grep -q "State: ACTIVE"; then
-  echo "It's running already. Next: python3 linux/spikes/gnome-shell/spike.py"
+  echo "It's running already. Next: /usr/bin/python3 linux/spikes/gnome-shell/spike.py"
 else
-  echo "Next: log out and back in, then run:"
+  echo "Next: log out and back in (GNOME only finds new extensions at login; until then it says it \"does not exist\"),"
+  echo "then run:"
   echo "    gnome-extensions enable $UUID"
-  echo "    python3 linux/spikes/gnome-shell/spike.py"
+  echo "    /usr/bin/python3 linux/spikes/gnome-shell/spike.py"
 fi
