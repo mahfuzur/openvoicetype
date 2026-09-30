@@ -1,0 +1,8 @@
+{
+  "uuid": "openvoicetype-spike@mahfuzur.github.io",
+  "name": "OpenVoiceType (P1 spike)",
+  "description": "Experiment for the Linux port: global hotkeys with key release, the focused window, the clipboard, pasting, an overlay and a panel icon, over D-Bus. Remove it after the test.",
+  "shell-version": ["46", "47", "48", "49", "50"],
+  "url": "https://github.com/mahfuzur/openvoicetype",
+  "version": 1
+}

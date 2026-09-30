@@ -158,7 +158,11 @@ single pipeline, so every prompt fix and eval reaches both platforms.
 - **Checkpoint:** `shellcheck scripts/*.sh`; the Mac `selftest`; `evals/run.py` ≥ 90% on Haiku; `build-app.sh --install`
   plus a real dictation (the macOS behaviour is unchanged); `cargo test` passes.
 
-### ☐ P1: Five one-day spikes on the Ubuntu PC (these set the final scope)
+### ◐ P1: Five one-day spikes on the Ubuntu PC (these set the final scope)
+
+Results: [research/2026-09-30-linux-spikes.md](../research/2026-09-30-linux-spikes.md). Spike 1 (the GNOME extension) passes in a
+headless GNOME Shell 50 except multi-type clipboard (no rich paste on GNOME this way); waiting for the run on the PC.
+
 1. **GNOME extension (~200 lines):**
    - D-Bus `Focus`, `Grab/Ungrab`, `GetClipboard/SetClipboard(mime)`, `Key(chord)`, `Modifiers`, driven with `busctl`.
    - Check hold-to-talk release and the Esc grab.
