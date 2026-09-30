@@ -86,14 +86,16 @@ check "online check: dead host" "$r" offline
 eval "$(sed -n '/^srv_file()/p; /^srv_binary()/p; /^srv_running()/,/^}/p' "$D")"
 STATE_DIR="$SANDBOX/servers"
 mkdir -p "$STATE_DIR"
-# A process named whisper-server: Linux reads the real executable from /proc, so it needs a copy; macOS reports the
-# path that was run, and kills a copied system binary (its signature no longer matches), so it gets a symlink.
+# A process named whisper-server. Linux reads the real executable from /proc, so it needs a copy: of perl, since the
+# Rust coreutils (Ubuntu 25.10+) are one program that picks its tool by name and wouldn't run as "whisper-server".
+# macOS reports the path that was run, and kills a copied system binary (its signature no longer matches): a symlink.
 if [[ "$(uname -s)" == Linux ]]; then
-  cp "$(command -v sleep)" "$SANDBOX/whisper-server"
+  cp "$(command -v perl)" "$SANDBOX/whisper-server"
+  "$SANDBOX/whisper-server" -e 'sleep 30' &
 else
   ln -s "$(command -v sleep)" "$SANDBOX/whisper-server"
+  "$SANDBOX/whisper-server" 30 &
 fi
-"$SANDBOX/whisper-server" 30 &
 server=$!
 sleep 30 &
 other=$!

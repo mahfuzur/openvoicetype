@@ -52,6 +52,8 @@ hotkey -> pin the paste target (app, window, title; refuse password fields) and 
 - **No BSD-only commands** in shared code: use `file_stamp` (perl) instead of `stat -f`, perl `strftime` instead of `date -r`,
   `has_default_route`/`tcp_reachable` instead of `route get`/`nc -G`. GNU `stat -f` doesn't fail, it prints file-system stats,
   which made every run restart the servers.
+- **Gotcha:** Ubuntu 25.10+ ships the Rust coreutils (uutils): `sleep`, `wc`, `tr`… are one program that picks its tool
+  by its name, so a copy renamed (as tests do to fake a server) doesn't run. Test on `ubuntu:25.10` as well as 24.04.
 - Rust builds and tests run in Docker (`rust:1-bookworm`); Homebrew's cargo on the maintainer's Mac is broken (libgit2/llhttp).
 
 ## Calling Claude for cleanup
