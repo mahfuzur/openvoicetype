@@ -134,8 +134,10 @@ impl Config {
         Self::from_vars(|name| std::env::var(name).ok())
     }
 
-    /// `from_env` with any variable source (for tests).
+    /// `from_env` with any variable source (for tests). An empty variable counts as unset, like the script's
+    /// `${X:-default}`.
     pub fn from_vars(var: impl Fn(&str) -> Option<String>) -> Self {
+        let var = |name: &str| var(name).filter(|value| !value.is_empty());
         let mut c = Config::default();
         // VTT_X, then X (only where dictate.sh reads both).
         let both = |name: &str| var(&format!("VTT_{name}")).or_else(|| var(name));
@@ -276,8 +278,9 @@ mod tests {
         assert_eq!((c.claude_timeout, c.force_offline, c.log_text), (20, true, true));
         assert_eq!(c.vocab, "Kubernetes,OpenVoiceType");
         assert_eq!(c.online_engine(), "openai");
-        let d = Config::from_vars(|_| None);
+        let d = Config::from_vars(|name| (name == "VTT_MODE" || name == "WHISPER_STYLE").then(String::new));
         assert_eq!((d.mode.as_str(), d.claude_model.as_str(), d.s1_port), ("default", "haiku", 8178));
+        assert_eq!(d.whisper_style, WHISPER_STYLE, "an empty variable is unset");
         assert_eq!(Config { job: Job::Command, ..d }.online_engine(), "claude");
     }
 }
