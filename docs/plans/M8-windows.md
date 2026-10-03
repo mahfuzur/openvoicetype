@@ -5,8 +5,10 @@ the same privacy guarantees (audio stays local, no API key, the user's own `clau
 
 **Status legend:** ☐ to do · ◐ in progress · ☑ done
 
-**Status: ◐ W0 started (2026-10-03).** The Git Bash gate failed on the first CI run (below), so the Windows app runs the
-cleanup pipeline in Rust (`crates/ovt-pipeline`), checked against `dictate.sh` by golden tests and the shared evals.
+**Status: ◐ W0 done, W2 built (2026-10-03); waiting for the first run on the PC (W1).** The Git Bash gate failed on the
+first CI run (below), so the Windows app runs the cleanup pipeline in Rust (`crates/ovt-pipeline`), checked against
+`dictate.sh` by golden tests (287 cases) and the shared contract test, on Linux and Windows CI. The first app
+(`windows/crates/openvoicetype`) builds with MSVC in CI; it has only run under Wine so far.
 
 ## Context
 
@@ -138,14 +140,19 @@ script, icon), `scripts/build-windows-deps.ps1` (whisper.cpp + llama.cpp, Vulkan
 - ☑ CI: a `windows` job (the contract test in Git Bash, `cargo fmt/clippy/test`).
 - ☑ The Rust code is one workspace at the root; `ovt-core` moved to `crates/` and builds on Windows (Unix-only parts
   behind `cfg(unix)`, Windows folders in `paths`, a portable `run_id`).
-- ☐ `crates/ovt-pipeline`: the cleanup pipeline in Rust, with the golden tests.
-- ☐ The `ovt` CLI with `dictate.sh`'s contract; `test-dictate.sh` and `evals/run.py` run against it.
+- ☑ `crates/ovt-pipeline`: the cleanup pipeline in Rust, with the golden tests (`golden/make-text.sh`: 239 cases;
+  `golden/make-claude.sh`: 48), regenerated in CI. The pre-start uses an ordinary pipe; S1-mini is started by the app
+  through `Session::set_s1_starter`.
+- ☑ The `ovt` CLI with `dictate.sh`'s contract; `test-dictate.sh` passes against it on Linux and Windows (10/10), and
+  `evals/run.py --bin` runs it. A pre-started `refine` (fake Claude) on `windows-latest`: 413 ms against `dictate.sh`'s
+  1,929 ms.
+- **Left for the PC:** the evals through `ovt.exe` with the real Claude (W1).
 - **Checkpoint:** CI green on all three; `test-dictate.sh` passes against both `dictate.sh` and `ovt`; evals on Haiku
   ≥ 90% through `ovt` (on the PC, or on Linux in CI with a fake Claude for the contract part).
 
 ### ☐ W1: Spikes on the Windows PC (half a day; they set the final scope)
 
-`windows/spike/spike.ps1` walks through them and writes a report:
+`windows/pc-test/run.ps1` (in the CI artifact `OpenVoiceType-windows`) walks through them and writes a report:
 1. **Pipeline:** `ovt selftest` with the real `claude.exe` and `whisper-server.exe` (the Windows voice instead of `say`);
    the pre-started Claude through a pipe (and the 3 s stdin rule of `claude -p`); Unicode in and out; timings;
    `evals/run.py --bin ovt.exe`.
@@ -155,7 +162,7 @@ script, icon), `scripts/build-windows-deps.ps1` (whisper.cpp + llama.cpp, Vulkan
 5. **Clipboard:** the history (Win+V) and cloud sync don't keep our pasted text; the restore runs after the target read it.
 6. **GPU:** the Vulkan whisper-server on the PC's GPU, and the CPU fallback.
 
-### ☐ W2: End-to-end dictation (first usable build)
+### ◐ W2: End-to-end dictation (first usable build): built, not yet run on a PC
 
 Tray icon and menu, hotkey (toggle and hold), recording, whisper-server start, the pre-started `refine`, paste with restore,
 the overlay, sounds, logs (`APP …` lines), settings file shared with `ovt-core`. Built in CI as an artifact.
