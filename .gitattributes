@@ -4,3 +4,4 @@
 scripts/testdata/* text eol=lf
 prompts/** text eol=lf
 evals/*.json text eol=lf
+*.cmd text eol=crlf
