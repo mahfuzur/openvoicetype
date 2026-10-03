@@ -13,6 +13,14 @@ trap 'rm -rf "$SANDBOX"' EXIT
 export HOME="$SANDBOX/home" TMPDIR="$SANDBOX/tmp" XDG_RUNTIME_DIR="$SANDBOX/run"
 unset XDG_CONFIG_HOME XDG_DATA_HOME XDG_STATE_HOME VTT_CONFIG
 export VTT_CLAUDE_BIN="$REPO_DIR/scripts/testdata/fake-claude" VTT_QUIET=on
+# No connection to api.anthropic.com before each fake Claude call, and a default route even with no network (stubs in
+# ~/.local/bin, which dictate.sh puts first on its PATH), so the tests also pass offline; the check itself is tested
+# below with the real commands. English dates for the reset-time check.
+export ONLINE_CHECK=off LC_ALL=C
+mkdir -p "$HOME/.local/bin"
+printf '#!/bin/sh\necho "default via 192.0.2.1 dev eth0"\n' > "$HOME/.local/bin/ip"
+printf '#!/bin/sh\necho "   route to: default"\n' > "$HOME/.local/bin/route"
+chmod +x "$HOME/.local/bin/ip" "$HOME/.local/bin/route"
 mkdir -p "$HOME" "$TMPDIR" "$XDG_RUNTIME_DIR"
 chmod 700 "$XDG_RUNTIME_DIR"
 if [[ "$(uname -s)" == Linux ]]; then
@@ -71,16 +79,26 @@ check "reset time formatted" "$([[ "$resets" =~ ^[A-Z][a-z]{2}\ [0-9]{1,2},\ [0-
 out="$(printf 'please send the report by friday' | VTT_OFFLINE=on VTT_S1_FALLBACK=off VTT_RESULT_FILE="$rf" bash "$D" refine)"
 check "offline" "$? $(json error "$rf")" "3 offline"
 
-# The online check itself (needs the internet, as CI has).
+# The online check itself (needs the internet, as CI has; skipped with no network at all).
 eval "$(sed -n '/^has_default_route()/,/^}/p; /^is_offline()/,/^}/p; /^tcp_reachable()/,/^}/p' "$D")"
 # shellcheck disable=SC2034 # read by the functions eval'd above
 OS="$(uname -s)" ONLINE_CHECK=on ONLINE_CHECK_HOST=api.anthropic.com
-has_default_route && r=yes || r=no
-check "default route" "$r" yes
-is_offline && r=offline || r=online
-check "online check: reachable host" "$r" online
-is_offline 10.255.255.1 443 && r=offline || r=online
-check "online check: dead host" "$r" offline
+if has_default_route; then
+  check "default route" yes yes
+  is_offline && r=offline || r=online
+  check "online check: reachable host" "$r" online
+  is_offline 10.255.255.1 443 && r=offline || r=online
+  check "online check: dead host" "$r" offline
+else
+  echo "skip  online check (no network)"
+fi
+
+# Linux without XDG_RUNTIME_DIR: a private folder one level deep in /tmp (the Rust app's paths::state_dir agrees).
+if [[ "$(uname -s)" == Linux ]]; then
+  fallback="/tmp/voice-to-text-$(id -u)"
+  printf 'x' | env -u XDG_RUNTIME_DIR VTT_REFINE=off bash "$D" refine >/dev/null
+  check "state folder without XDG_RUNTIME_DIR" "$(mode "$fallback")" 700
+fi
 
 # srv_running: our server's pid counts, a reused pid doesn't, and an upgraded (deleted) binary still does.
 eval "$(sed -n '/^srv_file()/p; /^srv_binary()/p; /^srv_running()/,/^}/p' "$D")"

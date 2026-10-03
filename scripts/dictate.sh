@@ -132,8 +132,14 @@ fi
 
 # Runtime state (pid files, per-run files, recordings). macOS's TMPDIR is private to the user. On Linux TMPDIR is usually
 # unset and /tmp is shared, so it's XDG_RUNTIME_DIR (private, cleared at logout). The apps use the same folders.
+# Without a usable XDG_RUNTIME_DIR (unset, or another user's after su), one level in /tmp, so the ownership check below
+# covers the folder itself and not a subfolder of a parent another user could have created.
 if [[ "$OS" == Linux ]]; then
-  STATE_DIR="${XDG_RUNTIME_DIR:-/tmp/voice-to-text-$(id -u)}/voice-to-text"
+  if [[ "${XDG_RUNTIME_DIR:-}" == /* && -d "$XDG_RUNTIME_DIR" && -O "$XDG_RUNTIME_DIR" ]]; then
+    STATE_DIR="$XDG_RUNTIME_DIR/voice-to-text"
+  else
+    STATE_DIR="/tmp/voice-to-text-$(id -u)"
+  fi
   LOG_DIR="${XDG_STATE_HOME:-$HOME/.local/state}/voice-to-text"
 else
   STATE_DIR="${TMPDIR:-/tmp}/voice-to-text"
@@ -718,7 +724,9 @@ tcp_reachable() {
   if [[ "$OS" == Darwin ]]; then
     perl -e 'alarm shift; exec @ARGV or die' 2 nc -z -G 1 "$1" "$2" >/dev/null 2>&1
   else
-    perl -MIO::Socket::IP -e '$SIG{ALRM} = sub { exit 1 }; alarm 2;
+    # An immediate (POSIX) alarm handler: perl's usual deferred one waits for the C call to return, and glibc's resolver
+    # retries after the interrupt, so a DNS server that doesn't answer took 10 s instead of 2.
+    perl -MPOSIX -MIO::Socket::IP -e 'sigaction(SIGALRM, POSIX::SigAction->new(sub { POSIX::_exit(1) })); alarm 2;
       IO::Socket::IP->new(PeerHost => $ARGV[0], PeerPort => $ARGV[1], Timeout => 1) or exit 1' "$1" "$2" >/dev/null 2>&1
   fi
 }
@@ -756,8 +764,8 @@ srv_binary() { if [[ "$1" == s1-server ]]; then printf 'llama-server'; else prin
 
 # True if the recorded pid is alive *and* is still our server. A pid file can outlive its process (a crash, a reboot)
 # and the OS reuses pids, so without the name check `stop` could kill an unrelated process.
-# Linux reads the executable from /proc: `ps -o comm=` is cut to 15 characters there, and an upgraded package leaves the
-# old server running as "<path> (deleted)" (then the signature differs and srv_start restarts it).
+# Linux reads /proc: the executable (an upgraded package leaves the old server running as "<path> (deleted)"; then the
+# signature differs and srv_start restarts it), or else the name it was started as (`comm`, which keeps a symlink's name).
 srv_running() {
   local pid_file pid command
   pid_file="$(srv_file "$1" pid)"
@@ -767,6 +775,8 @@ srv_running() {
   if [[ -d "/proc/$pid" ]]; then
     command="$(readlink "/proc/$pid/exe" 2>/dev/null)"
     command="${command% (deleted)}"
+    [[ "$(basename "$command")" == "$(srv_binary "$1")" ]] && return 0
+    command="$(cat "/proc/$pid/comm" 2>/dev/null)"
   else
     command="$(ps -p "$pid" -o comm= 2>/dev/null)"
   fi
@@ -928,11 +938,12 @@ refine_s1() {
   printf '%s' "$out"
 }
 
-# The CLI's clipboard (the apps do their own pasting). Linux: wl-clipboard on Wayland, xclip on X11.
+# The CLI's clipboard (the apps do their own pasting). Linux: wl-clipboard on Wayland, xclip on X11. Both leave a child
+# behind that owns the clipboard: its stdout and stderr go to /dev/null, or it would hold a caller's pipe open forever.
 clipboard_copy() {
   if [[ "$OS" == Darwin ]]; then pbcopy
-  elif [[ -n "${WAYLAND_DISPLAY:-}" ]] && command -v wl-copy >/dev/null; then wl-copy
-  elif command -v xclip >/dev/null; then xclip -selection clipboard
+  elif [[ -n "${WAYLAND_DISPLAY:-}" ]] && command -v wl-copy >/dev/null; then wl-copy >/dev/null 2>&1
+  elif command -v xclip >/dev/null; then xclip -selection clipboard >/dev/null 2>&1
   else return 1
   fi
 }

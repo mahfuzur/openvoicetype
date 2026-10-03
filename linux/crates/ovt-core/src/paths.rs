@@ -43,14 +43,18 @@ pub fn s1_dir() -> PathBuf {
 }
 
 /// Runtime state: pid files, per-run result and key files, recordings. `$XDG_RUNTIME_DIR` is private to the user and
-/// cleared at logout (macOS uses its per-user `$TMPDIR` for this).
+/// cleared at logout (macOS uses its per-user `$TMPDIR` for this). Without a usable one (unset, or another user's),
+/// `/tmp/voice-to-text-<uid>`, one level deep like dictate.sh, so its ownership check covers the folder itself.
 pub fn state_dir() -> PathBuf {
-    let runtime = match std::env::var_os("XDG_RUNTIME_DIR").map(PathBuf::from) {
-        Some(path) if path.is_absolute() => path,
-        // SAFETY: getuid never fails.
-        _ => PathBuf::from(format!("/tmp/voice-to-text-{}", unsafe { libc::getuid() })),
-    };
-    runtime.join("voice-to-text")
+    use std::os::unix::fs::MetadataExt;
+    // SAFETY: getuid never fails.
+    let uid = unsafe { libc::getuid() };
+    match std::env::var_os("XDG_RUNTIME_DIR").map(PathBuf::from) {
+        Some(path) if path.is_absolute() && std::fs::metadata(&path).is_ok_and(|m| m.is_dir() && m.uid() == uid) => {
+            path.join("voice-to-text")
+        }
+        _ => PathBuf::from(format!("/tmp/voice-to-text-{uid}")),
+    }
 }
 
 /// dictate.log and error.log (macOS: `~/Library/Logs/voice-to-text`).
@@ -73,10 +77,16 @@ mod tests {
         std::env::remove_var("XDG_CONFIG_HOME");
         std::env::remove_var("XDG_DATA_HOME");
         std::env::remove_var("XDG_STATE_HOME");
-        std::env::set_var("XDG_RUNTIME_DIR", "/run/user/1000");
+        let runtime = std::env::temp_dir().join(format!("ovt-runtime-{}", std::process::id()));
+        std::fs::create_dir_all(&runtime).unwrap();
+        std::env::set_var("XDG_RUNTIME_DIR", &runtime);
         assert_eq!(dictionary_file(), PathBuf::from("/home/u/.config/voice-to-text/dictionary.txt"));
         assert_eq!(whisper_dir(), PathBuf::from("/home/u/.local/share/whisper"));
-        assert_eq!(state_dir(), PathBuf::from("/run/user/1000/voice-to-text"));
+        assert_eq!(state_dir(), runtime.join("voice-to-text"));
+        std::env::set_var("XDG_RUNTIME_DIR", "/nonexistent/run");
+        let uid = unsafe { libc::getuid() };
+        assert_eq!(state_dir(), PathBuf::from(format!("/tmp/voice-to-text-{uid}")));
+        std::fs::remove_dir_all(runtime).unwrap();
         assert_eq!(log_file(), PathBuf::from("/home/u/.local/state/voice-to-text/dictate.log"));
         std::env::set_var("XDG_CONFIG_HOME", "relative/ignored");
         assert_eq!(config_dir(), PathBuf::from("/home/u/.config/voice-to-text"));

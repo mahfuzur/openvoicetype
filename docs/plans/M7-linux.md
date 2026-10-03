@@ -114,7 +114,10 @@ single pipeline, so every prompt fix and eval reaches both platforms.
 
 **Done (2026-09-30), with these changes from the plan:**
 - ☑ The online check on Linux connects from perl (`IO::Socket::IP`, alarm caught): bash `/dev/tcp` under a perl alarm made bash
-  print "Alarm clock" on a dead host. macOS keeps `nc -z -G 1` unchanged.
+  print "Alarm clock" on a dead host. macOS keeps `nc -z -G 1` unchanged. The alarm handler is a POSIX `sigaction` one: perl's
+  usual deferred handler waited for a DNS lookup that never answered (10 s instead of 2; review, 2026-10-03).
+- ☑ Without a usable `XDG_RUNTIME_DIR`, `STATE_DIR` is `/tmp/voice-to-text-<uid>` (one level, so the ownership check covers it).
+- ☑ The CLI's `wl-copy`/`xclip` get stdout/stderr on /dev/null: their clipboard-owning child held a caller's pipe open.
 - ☑ `srv_running` also strips the " (deleted)" `/proc` adds after a package upgrade, so the old server is restarted, not
   started twice on one port.
 - ☑ `dictate.sh` refuses a state folder owned by someone else (possible under a shared `/tmp` without `XDG_RUNTIME_DIR`), and
@@ -218,8 +221,9 @@ single pipeline, so every prompt fix and eval reaches both platforms.
 - `.deb` + `.rpm` (via `cargo-deb` / `cargo-generate-rpm`), built in an Ubuntu 24.04 container. They install
   `/usr/bin/openvoicetype`, `/usr/lib/openvoicetype/{whisper,llama,bin}`, `/usr/share/openvoicetype/{dictate.sh,prompts/}`
   (prompts stay next to the script), the `.desktop` file with the reverse-DNS id (needed by the portal), icons, the GNOME
-  extension under `/usr/share/gnome-shell/extensions/`, and ThirdPartyLicenses. Dependencies: `perl`, `curl`, `sox`,
-  `libpulse0`, `libgtk-4-1`, `libadwaita-1-0`, `libvulkan1`.
+  extension under `/usr/share/gnome-shell/extensions/`, and ThirdPartyLicenses. Dependencies: `perl` (Debian's full
+  package: `perl-base` alone has no `JSON::PP` or `Time::HiRes`, and `refine` then exits 2), on Fedora `perl-interpreter`
+  plus `perl-JSON-PP` and `perl-Time-HiRes`, `curl`, `sox`, `libpulse0`, `libgtk-4-1`, `libadwaita-1-0`, `libvulkan1`.
 - No Flatpak/AppImage: both are sandboxed or self-contained in ways that block the host `claude` CLI and installing the
   extension. Don't publish the extension on extensions.gnome.org; it ships inside the package.
 - **CI:** an `ubuntu-24.04` job in `ci.yml` (shellcheck, `cargo fmt/clippy/test`, cached Linux deps build, `.deb`/`.rpm`,
