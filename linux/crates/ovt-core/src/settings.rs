@@ -1,5 +1,6 @@
 //! Every user setting (follows `AppSettings.swift`), with the same names and defaults, stored as JSON in
-//! `~/.config/voice-to-text/settings.json`. Unknown or missing keys take their default, so an older or newer file loads.
+//! `~/.config/voice-to-text/settings.json`. Unknown or missing keys take their default, and so does a value this build
+//! can't read (a newer build's mode, a wrong type), key by key, so an older or newer file loads.
 
 use crate::hotkey::{self, Combo};
 use crate::mode::DictationMode;
@@ -140,10 +141,34 @@ impl Settings {
     /// Loads the file; a missing or broken file gives the defaults (a broken one is kept as settings.json.bad).
     pub fn load(path: &Path) -> Self {
         let Ok(text) = std::fs::read_to_string(path) else { return Self::default() };
-        serde_json::from_str(&text).unwrap_or_else(|_| {
+        Self::from_json(&text).unwrap_or_else(|| {
             let _ = std::fs::rename(path, path.with_extension("json.bad"));
             Self::default()
         })
+    }
+
+    /// Reads each key on its own, like `AppSettings` does: a value that doesn't decode keeps its default, and in a map
+    /// (`appModes`) only the entries that don't decode are dropped. None if the text isn't a JSON object.
+    pub fn from_json(text: &str) -> Option<Self> {
+        let serde_json::Value::Object(file) = serde_json::from_str(text).ok()? else { return None };
+        let mut merged = serde_json::to_value(Self::default()).ok()?;
+        let decodes = |value: &serde_json::Value| serde_json::from_value::<Self>(value.clone()).is_ok();
+        for (key, value) in file {
+            let mut candidate = merged.clone();
+            candidate[&key] = value.clone();
+            if decodes(&candidate) {
+                merged = candidate;
+            } else if let serde_json::Value::Object(entries) = value {
+                for (name, entry) in entries {
+                    let mut candidate = merged.clone();
+                    candidate[&key][&name] = entry;
+                    if decodes(&candidate) {
+                        merged = candidate;
+                    }
+                }
+            }
+        }
+        serde_json::from_value(merged).ok()
     }
 
     /// Writes atomically, readable by the user only.
@@ -195,6 +220,22 @@ mod tests {
         let json = serde_json::to_string(&s).unwrap();
         assert!(json.contains("\"hotKey\":\"<Control><Alt>space\""));
         assert_eq!(serde_json::from_str::<Settings>(&json).unwrap(), s);
+    }
+
+    #[test]
+    fn unreadable_values_keep_their_default() {
+        // A newer build's mode, an unknown overlay position and a wrong type lose only themselves.
+        let s = Settings::from_json(
+            r#"{"cleanupEngine":"s1","modeOverride":"poetry","overlayPosition":"left","refine":"on",
+                "appModes":{"code":"code","firefox":"poetry"}}"#,
+        )
+        .unwrap();
+        assert_eq!(s.cleanup_engine, "s1");
+        assert_eq!(s.mode_override, None);
+        assert_eq!(s.overlay_position, OverlayPosition::Bottom);
+        assert!(s.refine);
+        assert_eq!(s.app_modes, HashMap::from([("code".to_string(), DictationMode::Code)]));
+        assert!(Settings::from_json("[1]").is_none() && Settings::from_json("{broken").is_none());
     }
 
     #[test]

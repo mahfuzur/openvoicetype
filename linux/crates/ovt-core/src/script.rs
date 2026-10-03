@@ -206,6 +206,26 @@ pub struct ScriptRun {
     /// `command` only: where the plan goes (`VTT_COMMAND_FILE`), written once the selection is read.
     pub command_file: Option<PathBuf>,
     pub args: Vec<String>,
+    /// Set by `finish` and `terminate`; otherwise `drop` closes stdin and reaps the process.
+    reaped: bool,
+}
+
+impl Drop for ScriptRun {
+    /// A run dropped without `finish` (a replaced pre-start, an early return): closing stdin ends the script, and a
+    /// thread reaps it and then removes its files, so it leaves no zombie (Rust's `Child` doesn't reap on drop).
+    fn drop(&mut self) {
+        if self.reaped {
+            return;
+        }
+        drop(self.child.stdin.take());
+        let pid = self.child.id() as libc::pid_t;
+        let files = std::mem::take(&mut self.files);
+        std::thread::spawn(move || {
+            // SAFETY: waitpid(2) on our own child, which nothing else reaps.
+            unsafe { libc::waitpid(pid, std::ptr::null_mut(), 0) };
+            files.iter().for_each(|f| drop(std::fs::remove_file(f)));
+        });
+    }
 }
 
 pub struct LaunchOptions<'a> {
@@ -259,6 +279,7 @@ impl ScriptRun {
                 result_file,
                 command_file,
                 args: options.args.iter().map(|a| a.to_string()).collect(),
+                reaped: false,
             }),
             Err(error) => {
                 files.iter().for_each(|f| drop(std::fs::remove_file(f)));
@@ -313,6 +334,7 @@ impl ScriptRun {
             .and_then(|f| std::fs::read(f).ok())
             .and_then(|json| CleanupDetails::decode(&json));
         self.remove_files();
+        self.reaped = true;
         ScriptOutput { status, stdout, details }
     }
 
@@ -322,6 +344,7 @@ impl ScriptRun {
         unsafe { libc::kill(self.child.id() as libc::pid_t, libc::SIGTERM) };
         let _ = self.child.wait();
         self.remove_files();
+        self.reaped = true;
     }
 
     fn remove_files(&mut self) {
@@ -456,6 +479,31 @@ printf 'CLEANED %s %s' "$input" "$key"; exit 4"#,
     }
 
     #[test]
+    fn dropped_run_is_reaped() {
+        let dir = temp_dir("dropped");
+        let script = fake_script(&dir, "cat >/dev/null");
+        let run = ScriptRun::launch(LaunchOptions {
+            script: &script,
+            args: &["refine"],
+            env: vec![],
+            state_dir: &dir,
+            api_key: None,
+        })
+        .unwrap();
+        let pid = run.pid() as libc::pid_t;
+        drop(run);
+        // SAFETY: kill(2) with signal 0 only checks that the pid exists; a zombie still would.
+        let reaped = || unsafe { libc::kill(pid, 0) } != 0;
+        let files_left = || std::fs::read_dir(&dir).unwrap().count() > 1;
+        let done = (0..100).any(|_| {
+            std::thread::sleep(Duration::from_millis(20));
+            reaped() && !files_left()
+        });
+        assert!(done, "the dropped run is reaped (reaped: {}) and its files removed", reaped());
+        std::fs::remove_dir_all(dir).unwrap();
+    }
+
+    #[test]
     fn watchdog_sends_sigterm() {
         // The script's EXIT trap must run (that's what ends a pre-started Claude), so the watchdog can't use SIGKILL.
         let dir = temp_dir("watchdog");
@@ -463,10 +511,7 @@ printf 'CLEANED %s %s' "$input" "$key"; exit 4"#,
         let script = fake_script(
             &dir,
             // Like dictate.sh's pre-started Claude, the background job doesn't hold stdout (else reading it would wait).
-            &format!(
-                "trap 'touch {}' EXIT; trap 'kill $!; exit 143' TERM; cat >/dev/null; sleep 30 >/dev/null & wait",
-                marker.display()
-            ),
+            &format!("trap 'touch {}' EXIT; cat >/dev/null; sleep 30 >/dev/null & wait", marker.display()),
         );
         let run = ScriptRun::launch(LaunchOptions {
             script: &script,
@@ -479,7 +524,8 @@ printf 'CLEANED %s %s' "$input" "$key"; exit 4"#,
         let started = std::time::Instant::now();
         let output = run.finish(Some("x"), Some(Duration::from_millis(300)));
         assert!(started.elapsed() < Duration::from_secs(5));
-        assert_eq!(output.status, Some(143));
+        // Like dictate.sh (an EXIT trap, no TERM trap), bash runs the trap and then dies of the signal: no exit code.
+        assert_eq!(output.status, None);
         assert!(marker.exists(), "the EXIT trap ran");
         std::fs::remove_dir_all(dir).unwrap();
     }

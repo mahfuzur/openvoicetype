@@ -293,7 +293,7 @@ env -u ANTHROPIC_API_KEY -u ANTHROPIC_AUTH_TOKEN MAX_THINKING_TOKENS=0 CLAUDE_CO
     the model (`command_source`) didn't have them, and puts back the tags `command_message` neutralized (`&lt;` + exact tag
     name).
   - Exit 0 prints the text; exit 3 means nothing to paste (the reason is in the result file). `COMMAND_TIMEOUT` is 30 s,
-    and the app's watchdog allows 50 s.
+    and the app's watchdog allows 75 s.
 - **Sessions.** `CommandSession` (in memory) keeps the original, the instructions and the current result. Follow-ups work
   for 60 s; Menu → Restore Original Text for 5 minutes.
 - **Logs.** `APP COMMAND start|pasted|copied|failed …` and `COMMAND target=…` lines never contain the text; the

@@ -2,7 +2,8 @@
 //!
 //! Linux names apps by their desktop-file id (`org.gnome.Ptyxis`, `com.slack.Slack` for a Flatpak) or, without one, by
 //! their X11/Wayland class (`code`, `slack`). Both are compared lower-cased and without `.desktop`, and the tables list
-//! the native and the Flatpak/Snap names.
+//! the native and the Flatpak names. A Snap's id is `<snap>_<app>` (`code_code`, `thunderbird_thunderbird`), which
+//! `normalize_app_id` reduces to the app's name.
 
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
@@ -70,10 +71,17 @@ impl DictationMode {
     }
 }
 
-/// `org.gnome.Ptyxis.desktop` → `org.gnome.ptyxis`.
+/// `org.gnome.Ptyxis.desktop` → `org.gnome.ptyxis`, and a Snap's `code_code.desktop` → `code`.
 pub fn normalize_app_id(app_id: &str) -> String {
     let id = app_id.trim().to_lowercase();
-    id.strip_suffix(".desktop").map(str::to_string).unwrap_or(id)
+    let id = id.strip_suffix(".desktop").map(str::to_string).unwrap_or(id);
+    let known =
+        [CHAT_APPS, EMAIL_APPS, CODE_APPS, TERMINALS, NOTES_APPS].iter().any(|table| table.contains(&id.as_str()));
+    let snap_part = |part: &str| !part.is_empty() && part.chars().all(|c| c.is_ascii_alphanumeric() || c == '-');
+    match id.split_once('_') {
+        Some((snap, app)) if !known && snap_part(snap) && snap_part(app) => app.to_string(),
+        _ => id,
+    }
 }
 
 /// Editors, IDEs and terminals: identifiers stay exact, no Markdown, and the paste-target check trusts the window
@@ -93,9 +101,36 @@ pub fn copies_line_without_selection(normalized_id: &str) -> bool {
     LINE_COPY_EDITORS.contains(&normalized_id) || is_jetbrains(normalized_id)
 }
 
-fn is_jetbrains(id: &str) -> bool {
-    id.starts_with("jetbrains-") || id.starts_with("com.jetbrains.")
+/// True if a copied text is what a line-copying editor puts on the clipboard with nothing selected: one line ending
+/// in a newline (follows `SelectionReader.looksLikeLineCopy`).
+pub fn looks_like_line_copy(text: &str, app_id: Option<&str>) -> bool {
+    let Some(app_id) = app_id else { return false };
+    if !copies_line_without_selection(&normalize_app_id(app_id)) {
+        return false;
+    }
+    text.strip_suffix('\n').is_some_and(|body| !body.contains('\n'))
 }
+
+fn is_jetbrains(id: &str) -> bool {
+    id.starts_with("jetbrains-") || id.starts_with("com.jetbrains.") || JETBRAINS_SNAPS.contains(&id)
+}
+
+/// JetBrains IDEs installed as Snaps (their ids after `normalize_app_id`).
+const JETBRAINS_SNAPS: &[&str] = &[
+    "intellij-idea-community",
+    "intellij-idea-ultimate",
+    "pycharm-community",
+    "pycharm-professional",
+    "webstorm",
+    "goland",
+    "clion",
+    "rider",
+    "phpstorm",
+    "rubymine",
+    "datagrip",
+    "rustrover",
+    "android-studio",
+];
 
 const CHAT_APPS: &[&str] = &[
     "slack",
@@ -246,6 +281,12 @@ mod tests {
         assert_eq!(DictationMode::for_app(Some("md.obsidian.Obsidian"), &none), DictationMode::Notes);
         assert_eq!(DictationMode::for_app(Some("firefox"), &none), DictationMode::Default);
         assert_eq!(DictationMode::for_app(None, &none), DictationMode::Default);
+        // Snaps: `<snap>_<app>.desktop`.
+        assert_eq!(DictationMode::for_app(Some("code_code.desktop"), &none), DictationMode::Code);
+        assert_eq!(DictationMode::for_app(Some("thunderbird_thunderbird.desktop"), &none), DictationMode::Email);
+        assert_eq!(DictationMode::for_app(Some("slack_slack"), &none), DictationMode::Chat);
+        assert_eq!(DictationMode::for_app(Some("pycharm-community_pycharm-community"), &none), DictationMode::Code);
+        assert_eq!(normalize_app_id("sublime_text"), "sublime_text");
         let custom = HashMap::from([("firefox".to_string(), DictationMode::Email)]);
         assert_eq!(DictationMode::for_app(Some("Firefox.desktop"), &custom), DictationMode::Email);
     }
@@ -255,6 +296,16 @@ mod tests {
         assert!(is_terminal("org.gnome.ptyxis") && is_terminal("kitty") && !is_terminal("code"));
         assert!(copies_line_without_selection("code") && copies_line_without_selection("jetbrains-pycharm"));
         assert!(!copies_line_without_selection("org.gnome.texteditor"));
+    }
+
+    #[test]
+    fn line_copy_guard() {
+        // The LogicSelfTest "line-copy guard" vectors.
+        assert!(looks_like_line_copy("foo()\n", Some("code")));
+        assert!(!looks_like_line_copy("foo\nbar\n", Some("code")));
+        assert!(!looks_like_line_copy("foo()\n", Some("org.gnome.TextEditor")));
+        assert!(looks_like_line_copy("foo()\n", Some("code_code.desktop")));
+        assert!(!looks_like_line_copy("foo()", Some("code")));
     }
 
     #[test]
