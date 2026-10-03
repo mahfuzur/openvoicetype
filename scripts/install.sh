@@ -7,16 +7,23 @@
 # Links `dictate` into ~/.local/bin, creates the config, downloads the compressed Whisper model (574 MB, the app's
 # default; the same file the app uses, so it's downloaded once), and runs the self-test. --with-s1-mini also installs
 # llama.cpp and S1-mini (484 MB) for offline cleanup; --full-model downloads the full 1.6 GB model instead.
-# Models that are already there aren't downloaded again. Needs Homebrew's sox and whisper-cpp.
+# Models that are already there aren't downloaded again. Needs sox and whisper.cpp: Homebrew's on macOS; on Linux, sox from
+# the distro and whisper.cpp from the OpenVoiceType package (or your own build).
 set -euo pipefail
 
-export PATH="/opt/homebrew/bin:/usr/local/bin:$HOME/.local/bin:$PATH"
+export PATH="/opt/homebrew/bin:/usr/local/bin:$HOME/.local/bin:$PATH:/usr/lib/openvoicetype/bin"
 
 REPO_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 BIN_DIR="$HOME/.local/bin"
-CONFIG_DIR="$HOME/.config/voice-to-text"
-MODEL_DIR="$HOME/.local/share/whisper"
-S1_DIR="$HOME/.local/share/s1-mini"
+# The same folders as dictate.sh: XDG base directories on Linux, fixed paths on macOS.
+if [[ "$(uname -s)" == Linux ]]; then
+  CONFIG_HOME="${XDG_CONFIG_HOME:-$HOME/.config}" DATA_HOME="${XDG_DATA_HOME:-$HOME/.local/share}"
+else
+  CONFIG_HOME="$HOME/.config" DATA_HOME="$HOME/.local/share"
+fi
+CONFIG_DIR="$CONFIG_HOME/voice-to-text"
+MODEL_DIR="$DATA_HOME/whisper"
+S1_DIR="$DATA_HOME/s1-mini"
 # Pinned revisions and checksums, the same as the app's model manager (app/Sources/VoiceToText/ModelManager.swift).
 WHISPER_REPO="https://huggingface.co/ggerganov/whisper.cpp/resolve/5359861c739e955e79d9a303bcbc70fb988958b1"
 S1_REPO="https://huggingface.co/superwhisper/s1-mini-GGUF/resolve/34add00a48a2e5d24e5a4ee5405a99620a3a240c"
@@ -42,10 +49,18 @@ for cmd in rec sox whisper-cli; do
   command -v "$cmd" >/dev/null || missing+=("$cmd")
 done
 if ((${#missing[@]})); then
-  echo "Missing: ${missing[*]}. Install them with: brew install sox whisper-cpp" >&2
-  echo "(Only the command-line tool needs them. For the app, download the DMG instead: see the README.)" >&2
+  if [[ "$(uname -s)" == Linux ]]; then
+    echo "Missing: ${missing[*]}. Install sox from your distro (sudo apt install sox, or sudo dnf install sox); the" >&2
+    echo "OpenVoiceType package brings whisper-cli (or build whisper.cpp yourself)." >&2
+  else
+    echo "Missing: ${missing[*]}. Install them with: brew install sox whisper-cpp" >&2
+    echo "(Only the command-line tool needs them. For the app, download the DMG instead: see the README.)" >&2
+  fi
   exit 1
 fi
+
+# The SHA-256 of a file: shasum on macOS, sha256sum on Linux (Fedora's shasum needs an extra perl package).
+sha256() { if command -v sha256sum >/dev/null; then sha256sum "$1"; else shasum -a 256 "$1"; fi | cut -d' ' -f1; }
 command -v claude >/dev/null ||
   echo "Note: the Claude Code CLI isn't installed, so cleanup falls back to Whisper's text (or S1-mini)." >&2
 
@@ -56,10 +71,10 @@ download() {
   mkdir -p "$(dirname "$file")"
   echo "Downloading $label..."
   # A finished .part from an interrupted run is used as is (resuming it would get HTTP 416); a broken one starts over.
-  if [[ ! -f "$file.part" || "$(shasum -a 256 "$file.part" | cut -d' ' -f1)" != "$sha" ]]; then
+  if [[ ! -f "$file.part" || "$(sha256 "$file.part")" != "$sha" ]]; then
     curl -L --fail --continue-at - -o "$file.part" "$url" || { rm -f "$file.part"; curl -L --fail -o "$file.part" "$url"; }
   fi
-  if [[ "$(shasum -a 256 "$file.part" | cut -d' ' -f1)" != "$sha" ]]; then
+  if [[ "$(sha256 "$file.part")" != "$sha" ]]; then
     echo "The download of $label is damaged (checksum mismatch). Run the script again." >&2
     rm -f "$file.part"
     exit 1
@@ -86,12 +101,16 @@ fi
 
 if [[ "$with_s1" == on ]]; then
   if ! command -v llama-server >/dev/null; then
-    echo "Installing llama.cpp (runs S1-mini for offline cleanup)..."
-    brew install llama.cpp
+    if [[ "$(uname -s)" == Linux ]]; then
+      echo "Note: llama-server (llama.cpp) isn't installed. The OpenVoiceType package brings it; S1-mini needs it." >&2
+    else
+      echo "Installing llama.cpp (runs S1-mini for offline cleanup)..."
+      brew install llama.cpp
+    fi
   fi
   download "$S1_REPO/s1-mini-q4_k_m.gguf" "$S1_DIR/s1-mini-q4_k_m.gguf" \
     3b41ebe2502cbd03e811d5d16b022f5ab551eda58d62597d152f89535003c634 "S1-mini by Superwhisper (484 MB)"
 fi
 
-echo "Running self-test (the first run loads Whisper and compiles its Metal shaders, so it's slower)..."
+echo "Running self-test (the first run loads Whisper and compiles its GPU shaders, so it's slower)..."
 "$BIN_DIR/dictate" selftest

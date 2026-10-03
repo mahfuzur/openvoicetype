@@ -1,0 +1,21 @@
+#!/usr/bin/env bash
+# A stand-in for the claude CLI, for scripts/test-dictate.sh: its "cleanup" is the transcript in capitals. It answers
+# --help, the --system-prompt-file probe and `auth status` like the real one, and FAKE_MODE=limit plays a usage limit.
+args="$*"
+if [[ "$args" == *--help* ]]; then echo "--safe-mode --disable-slash-commands"; exit 0; fi
+if [[ "$args" == *"/nonexistent/vtt-probe"* ]]; then echo "Error: file not found"; exit 1; fi
+if [[ "$args" == "auth status --json" ]]; then echo '{"loggedIn": true}'; exit 0; fi
+if [[ "${FAKE_MODE:-}" == limit ]]; then
+  echo '{"type":"rate_limit_event","rate_limit_info":{"status":"rejected","resetsAt":1790000000}}'
+  echo '{"type":"result","is_error":true,"result":"Usage limit reached"}'; exit 1
+fi
+if [[ "$args" == *"--input-format stream-json"* ]]; then
+  IFS= read -r line
+  text="$(printf '%s' "$line" | perl -MJSON::PP -ne 'my $m = decode_json($_)->{message}{content}; $m =~ /<transcript>\n(.*)\n<\/transcript>/s; print uc $1')"
+  echo '{"type":"system","subtype":"init"}'
+  perl -MJSON::PP -e 'print encode_json({type=>"result", result=>$ARGV[0]}), "\n"' "$text"
+  exit 0
+fi
+input="$(cat)"
+text="$(printf '%s' "$input" | perl -0777 -ne '/<transcript>\n(.*)\n<\/transcript>/s; print uc $1')"
+perl -MJSON::PP -e 'print encode_json({type=>"result", result=>$ARGV[0]}), "\n"' "$text"

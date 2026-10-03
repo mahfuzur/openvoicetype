@@ -27,13 +27,13 @@
 # CLAUDE_BIN="claude"      # path to the Claude Code CLI, if it isn't on PATH
 # CLAUDE_USE_API_KEY="off" # on = let an exported ANTHROPIC_API_KEY bill the API instead of your Claude plan
 
-# Cleanup engine: claude, openai (the endpoint below), or s1 to always clean up on this Mac
+# Cleanup engine: claude, openai (the endpoint below), or s1 to always clean up on this computer
 # CLEANUP="claude"
 
 # An OpenAI-compatible endpoint (CLEANUP="openai"): Ollama, LM Studio, OpenAI, Groq, OpenRouter...
 # OPENAI_BASE_URL="http://localhost:11434/v1"
 # OPENAI_MODEL="llama3.2"
-# OPENAI_API_KEY=""        # not needed for local servers; the app keeps it in the Keychain instead
+# OPENAI_API_KEY=""        # not needed for local servers; the app keeps it in the Keychain (Linux: the Secret Service) instead
 # OPENAI_TIMEOUT=15
 
 # Command Mode (edit selected text by voice): claude, or openai (the endpoint above). S1-mini can't follow instructions.
@@ -73,7 +73,7 @@
 # MAX_SECONDS=300
 # MIN_SECONDS=0.5
 
-# Log raw and cleaned text in ~/Library/Logs/voice-to-text/dictate.log (for debugging). Off keeps timings only,
-# and removes text lines an earlier version wrote.
+# Log raw and cleaned text in dictate.log (for debugging): ~/Library/Logs/voice-to-text on macOS,
+# ~/.local/state/voice-to-text on Linux. Off keeps timings only, and removes text lines an earlier version wrote.
 # LOG_TEXT="off"
 # LOG_MAX_KB=1024          # the log rotates at this size (one previous file is kept)

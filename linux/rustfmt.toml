@@ -1,0 +1,3 @@
+# The repo's line length (the Swift and shell code use 120 too).
+max_width = 120
+use_small_heuristics = "Max"

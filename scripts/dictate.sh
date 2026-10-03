@@ -7,7 +7,7 @@
 #   stop        stop recording, transcribe, refine, paste
 #   cancel      stop recording and discard it
 #   file        run the pipeline on an existing WAV and print the result (no paste)
-#   selftest    synthesize speech with `say`, run the pipeline, print timings (no paste)
+#   selftest    synthesize speech (`say` on macOS, espeak-ng on Linux), run the pipeline, print timings (no paste)
 #   transcribe  print the raw transcript of a WAV (empty if no speech)        [used by the app]
 #   refine      clean up the transcript on stdin and print it; exit 3 = fell back to raw,
 #               exit 4 = the online engine was unavailable and S1-mini cleaned it up,
@@ -22,15 +22,26 @@ set -euo pipefail
 umask 077
 
 # VTT_BIN_DIR: the app's bundled whisper-server, whisper-cli and llama-server, which win over Homebrew's.
-export PATH="${VTT_BIN_DIR:+$VTT_BIN_DIR:}/opt/homebrew/bin:/usr/local/bin:$HOME/.local/bin:$PATH"
+# /usr/lib/openvoicetype/bin (last): the Linux package's copies, so the CLI works with just the package installed.
+export PATH="${VTT_BIN_DIR:+$VTT_BIN_DIR:}/opt/homebrew/bin:/usr/local/bin:$HOME/.local/bin:$PATH:/usr/lib/openvoicetype/bin"
 
-CONFIG_FILE="${VTT_CONFIG:-$HOME/.config/voice-to-text/config.sh}"
+# Darwin (macOS) or Linux. The pipeline is the same; only the desktop parts (sounds, notifications, the CLI's paste)
+# and the folder locations differ.
+OS="$(uname -s)"
+# Linux follows the XDG base directories. macOS keeps the fixed paths the app also uses, whatever XDG_* says.
+if [[ "$OS" == Linux ]]; then
+  CONFIG_HOME="${XDG_CONFIG_HOME:-$HOME/.config}" DATA_HOME="${XDG_DATA_HOME:-$HOME/.local/share}"
+else
+  CONFIG_HOME="$HOME/.config" DATA_HOME="$HOME/.local/share"
+fi
+
+CONFIG_FILE="${VTT_CONFIG:-$CONFIG_HOME/voice-to-text/config.sh}"
 # shellcheck source=/dev/null
 [[ -f "$CONFIG_FILE" ]] && source "$CONFIG_FILE"
 
 # The compressed model (the app's default) when it's there, else the full one install.sh used to download.
 default_whisper_model() {
-  local dir="$HOME/.local/share/whisper" name
+  local dir="$DATA_HOME/whisper" name
   for name in ggml-large-v3-turbo-q5_0.bin ggml-large-v3-turbo.bin; do
     [[ -f "$dir/$name" ]] && { printf '%s' "$dir/$name"; return 0; }
   done
@@ -80,7 +91,7 @@ COMMAND_FILE="${VTT_COMMAND_FILE:-}"     # the app's JSON: target, original, cur
 S1_FALLBACK="${VTT_S1_FALLBACK:-${S1_FALLBACK:-on}}"
 # After an AI cleanup, paste Whisper's text instead if a number or a negation ("not", "never"...) went missing.
 MEANING_GUARD="${MEANING_GUARD:-on}"
-S1_MODEL="${S1_MODEL:-$HOME/.local/share/s1-mini/s1-mini-q4_k_m.gguf}"
+S1_MODEL="${S1_MODEL:-$DATA_HOME/s1-mini/s1-mini-q4_k_m.gguf}"
 S1_PORT="${S1_PORT:-8178}"
 S1_TIMEOUT="${S1_TIMEOUT:-10}"
 S1_IDLE_MINUTES="${S1_IDLE_MINUTES:-10}" # a server started for a fallback stops after this long unused
@@ -97,8 +108,8 @@ MIN_SECONDS="${MIN_SECONDS:-0.5}"
 # Dictated text (raw and cleaned) in the log, for debugging. Off: the log keeps timings and outcomes only.
 LOG_TEXT="${VTT_LOG_TEXT:-${LOG_TEXT:-off}}"
 LOG_MAX_KB="${LOG_MAX_KB:-1024}" # dictate.log and error.log rotate at this size, keeping one previous file
-PROMPT_FILE="${PROMPT_FILE:-$HOME/.config/voice-to-text/prompt.txt}"
-DICTIONARY_FILE="${DICTIONARY_FILE:-$HOME/.config/voice-to-text/dictionary.txt}"
+PROMPT_FILE="${PROMPT_FILE:-$CONFIG_HOME/voice-to-text/prompt.txt}"
+DICTIONARY_FILE="${DICTIONARY_FILE:-$CONFIG_HOME/voice-to-text/dictionary.txt}"
 MODE="${VTT_MODE:-${MODE:-default}}" # default | chat | email | code | notes | raw
 APP_NAME="${VTT_APP:-}"              # frontmost app, sent to Claude as context
 WHISPER_PROMPT="${WHISPER_PROMPT:-on}"
@@ -119,14 +130,29 @@ else
   PROMPTS_DIR="$SCRIPT_DIR/../prompts"
 fi
 
-STATE_DIR="${TMPDIR:-/tmp}/voice-to-text"
+# Runtime state (pid files, per-run files, recordings). macOS's TMPDIR is private to the user. On Linux TMPDIR is usually
+# unset and /tmp is shared, so it's XDG_RUNTIME_DIR (private, cleared at logout). The apps use the same folders.
+# Without a usable XDG_RUNTIME_DIR (unset, or another user's after su), one level in /tmp, so the ownership check below
+# covers the folder itself and not a subfolder of a parent another user could have created.
+if [[ "$OS" == Linux ]]; then
+  if [[ "${XDG_RUNTIME_DIR:-}" == /* && -d "$XDG_RUNTIME_DIR" && -O "$XDG_RUNTIME_DIR" ]]; then
+    STATE_DIR="$XDG_RUNTIME_DIR/voice-to-text"
+  else
+    STATE_DIR="/tmp/voice-to-text-$(id -u)"
+  fi
+  LOG_DIR="${XDG_STATE_HOME:-$HOME/.local/state}/voice-to-text"
+else
+  STATE_DIR="${TMPDIR:-/tmp}/voice-to-text"
+  LOG_DIR="$HOME/Library/Logs/voice-to-text"
+fi
 PID_FILE="$STATE_DIR/rec.pid"
 WAV="$STATE_DIR/recording.wav"
-LOG_DIR="$HOME/Library/Logs/voice-to-text"
 LOG_FILE="${VTT_LOG_FILE:-$LOG_DIR/dictate.log}"
 ERR_FILE="$LOG_DIR/error.log"
 
 mkdir -p "$STATE_DIR" "$LOG_DIR"
+# A folder someone else created first (possible under a shared /tmp) could be used to plant files.
+[[ -O "$STATE_DIR" ]] || { echo "dictate.sh: $STATE_DIR belongs to another user" >&2; exit 1; }
 
 # What this run does: cleanup (refine, dictation) or command (Command Mode), and the online engine it uses.
 JOB=cleanup
@@ -151,7 +177,8 @@ log_maintain() {
   mkdir "$lock" 2>/dev/null || return 0
   for file in "$LOG_FILE" "$ERR_FILE"; do
     [[ -f "$file" ]] || continue
-    size="$(stat -f %z "$file" 2>/dev/null || echo 0)"
+    size="$(wc -c <"$file" 2>/dev/null | tr -d ' ')"
+    size="${size:-0}"
     if ((size > LOG_MAX_KB * 1024)); then mv -f "$file" "$file.1" 2>/dev/null || true; fi
   done
   if [[ "$LOG_TEXT" != on ]]; then
@@ -179,16 +206,36 @@ HALLUCINATIONS='^(thank you\.?|thanks for watching[.!]?|you|\.|\[blank_audio\]|\
 
 now_ms() { perl -MTime::HiRes=time -e 'printf "%d\n", time*1000'; }
 
+# A file's size and modification time ("size-mtime"), following symlinks. BSD and GNU stat disagree on every flag.
+file_stamp() { perl -e 'my @s = stat $ARGV[0] or exit 1; print "$s[7]-$s[9]"' "$1"; }
+
 log() { printf '%s %s\n' "$(date '+%Y-%m-%d %H:%M:%S')" "$*" >>"$LOG_FILE"; }
 
+# $1 is the macOS system sound; Linux plays the nearest freedesktop sound.
 sound() {
   [[ "$SOUNDS" == on && "$QUIET" != on ]] || return 0
-  afplay "/System/Library/Sounds/$1.aiff" >/dev/null 2>&1 &
+  if [[ "$OS" == Darwin ]]; then
+    afplay "/System/Library/Sounds/$1.aiff" >/dev/null 2>&1 &
+    return 0
+  fi
+  local name
+  case "$1" in
+    Tink) name=message ;;
+    Pop) name=complete ;;
+    Funk) name=dialog-information ;;
+    *) name=dialog-warning ;;
+  esac
+  { pw-play "/usr/share/sounds/freedesktop/stereo/$name.oga" || paplay "/usr/share/sounds/freedesktop/stereo/$name.oga"; } \
+    >/dev/null 2>&1 &
 }
 
 notify() {
   [[ "$QUIET" != on ]] || return 0
-  osascript -e "display notification \"${1//\"/\\\"}\" with title \"Dictation\"" >/dev/null 2>&1 || true
+  if [[ "$OS" == Darwin ]]; then
+    osascript -e "display notification \"${1//\"/\\\"}\" with title \"Dictation\"" >/dev/null 2>&1 || true
+  else
+    notify-send "Dictation" "$1" >/dev/null 2>&1 || true
+  fi
 }
 
 fail() {
@@ -207,7 +254,7 @@ start_recording() {
     return 0
   fi
   rm -f "$WAV" "$PID_FILE"
-  command -v rec >/dev/null || fail "sox 'rec' not found (brew install sox)"
+  command -v rec >/dev/null || fail "sox 'rec' not found (brew install sox, or sudo apt install sox)"
   # Detach fully so the recorder outlives this script (Shortcuts/skhd wait on open stdio).
   nohup rec -q -c 1 -r 16000 -b 16 "$WAV" trim 0 "$MAX_SECONDS" </dev/null >/dev/null 2>>"$ERR_FILE" &
   echo $! >"$PID_FILE"
@@ -418,7 +465,7 @@ post_process() {
 claude_options() {
   local bin sig cache help probe
   bin="$(command -v "$CLAUDE_BIN" 2>/dev/null)" || return 0
-  sig="$bin $(stat -L -f '%z-%m' "$bin" 2>/dev/null)"
+  sig="$bin $(file_stamp "$bin" 2>/dev/null)"
   cache="$STATE_DIR/claude-options"
   if [[ -f "$cache" && "$(head -1 "$cache")" == "$sig" ]]; then
     tail -n +2 "$cache"
@@ -666,9 +713,32 @@ claude_plain() {
 is_offline() {
   local host="${1:-$ONLINE_CHECK_HOST}" port="${2:-443}"
   [[ "${VTT_OFFLINE:-}" == on ]] && return 0
-  route -n get default >/dev/null 2>&1 || return 0
+  has_default_route || return 0
   [[ "$ONLINE_CHECK" == on && -z "${HTTPS_PROXY:-}${https_proxy:-}${ALL_PROXY:-}${all_proxy:-}" ]] || return 1
-  ! perl -e 'alarm shift; exec @ARGV or die' 2 nc -z -G 1 "$host" "$port" >/dev/null 2>&1
+  ! tcp_reachable "$host" "$port"
+}
+
+# A TCP connect to host $1 port $2 within 1 s (2 s with DNS). Linux connects from perl: the nc flavours disagree on the
+# timeout flag, and some distros have no nc. The alarm is caught, so bash prints no "Alarm clock" notice.
+tcp_reachable() {
+  if [[ "$OS" == Darwin ]]; then
+    perl -e 'alarm shift; exec @ARGV or die' 2 nc -z -G 1 "$1" "$2" >/dev/null 2>&1
+  else
+    # An immediate (POSIX) alarm handler: perl's usual deferred one waits for the C call to return, and glibc's resolver
+    # retries after the interrupt, so a DNS server that doesn't answer took 10 s instead of 2.
+    perl -MPOSIX -MIO::Socket::IP -e 'sigaction(SIGALRM, POSIX::SigAction->new(sub { POSIX::_exit(1) })); alarm 2;
+      IO::Socket::IP->new(PeerHost => $ARGV[0], PeerPort => $ARGV[1], Timeout => 1) or exit 1' "$1" "$2" >/dev/null 2>&1
+  fi
+}
+
+# macOS: `route -n get default`. Linux: `ip route` (net-tools `route` has no `get`); without iproute2, assume a route
+# and let the TCP connect decide.
+has_default_route() {
+  if [[ "$OS" == Darwin ]]; then
+    route -n get default >/dev/null 2>&1
+  elif command -v ip >/dev/null; then
+    [[ -n "$(ip route show default 2>/dev/null)$(ip -6 route show default 2>/dev/null)" ]]
+  fi
 }
 
 # --- Local model servers ---
@@ -693,14 +763,23 @@ srv_installed() {
 srv_binary() { if [[ "$1" == s1-server ]]; then printf 'llama-server'; else printf 'whisper-server'; fi; }
 
 # True if the recorded pid is alive *and* is still our server. A pid file can outlive its process (a crash, a reboot)
-# and macOS reuses pids, so without the name check `stop` could kill an unrelated process.
+# and the OS reuses pids, so without the name check `stop` could kill an unrelated process.
+# Linux reads /proc: the executable (an upgraded package leaves the old server running as "<path> (deleted)"; then the
+# signature differs and srv_start restarts it), or else the name it was started as (`comm`, which keeps a symlink's name).
 srv_running() {
   local pid_file pid command
   pid_file="$(srv_file "$1" pid)"
   [[ -f "$pid_file" ]] || return 1
   pid="$(cat "$pid_file")"
   [[ "$pid" =~ ^[0-9]+$ ]] && kill -0 "$pid" 2>/dev/null || return 1
-  command="$(ps -p "$pid" -o comm= 2>/dev/null)"
+  if [[ -d "/proc/$pid" ]]; then
+    command="$(readlink "/proc/$pid/exe" 2>/dev/null)"
+    command="${command% (deleted)}"
+    [[ "$(basename "$command")" == "$(srv_binary "$1")" ]] && return 0
+    command="$(cat "/proc/$pid/comm" 2>/dev/null)"
+  else
+    command="$(ps -p "$pid" -o comm= 2>/dev/null)"
+  fi
   [[ "$(basename "$command")" == "$(srv_binary "$1")" ]]
 }
 
@@ -718,7 +797,7 @@ srv_signature() {
   local binary
   binary="$(command -v "$(srv_binary "$1")" || true)"
   # Its size and date too: an updated app replaces the helpers at the same path.
-  printf '%s %s %s' "$binary" "$( [[ -n "$binary" ]] && stat -f '%z-%m' "$binary")" "$model"
+  printf '%s %s %s' "$binary" "$( [[ -n "$binary" ]] && file_stamp "$binary")" "$model"
 }
 
 srv_launch() {
@@ -740,7 +819,7 @@ srv_launch() {
 }
 
 # Starts the server unless it is running, and waits until its model is loaded (S1-mini about 1 s, Whisper about 0.6 s).
-# The app's bundled builds compile their Metal shaders on the very first launch (10-20 s, then cached by macOS).
+# The app's bundled builds compile their GPU shaders on the very first launch (Metal: 10-20 s, then cached by macOS).
 srv_start() {
   local name="$1" lock deadline pid
   srv_installed "$name" || return 1
@@ -760,7 +839,7 @@ srv_start() {
     log "SERVER $name START pid=$(cat "$(srv_file "$name" pid)")"
     touch "$(srv_file "$name" used)"
     # The idle watchdog runs detached from this short-lived script.
-    nohup /bin/bash "$SCRIPT_DIR/$(basename "$SCRIPT_PATH")" "$name" watch "$(cat "$(srv_file "$name" pid)")" \
+    nohup "$BASH" "$SCRIPT_DIR/$(basename "$SCRIPT_PATH")" "$name" watch "$(cat "$(srv_file "$name" pid)")" \
       </dev/null >/dev/null 2>&1 3>&- &
     disown || true
   fi
@@ -859,19 +938,52 @@ refine_s1() {
   printf '%s' "$out"
 }
 
+# The CLI's clipboard (the apps do their own pasting). Linux: wl-clipboard on Wayland, xclip on X11. Both leave a child
+# behind that owns the clipboard: its stdout and stderr go to /dev/null, or it would hold a caller's pipe open forever.
+clipboard_copy() {
+  if [[ "$OS" == Darwin ]]; then pbcopy
+  elif [[ -n "${WAYLAND_DISPLAY:-}" ]] && command -v wl-copy >/dev/null; then wl-copy >/dev/null 2>&1
+  elif command -v xclip >/dev/null; then xclip -selection clipboard >/dev/null 2>&1
+  else return 1
+  fi
+}
+
+clipboard_read() {
+  if [[ "$OS" == Darwin ]]; then pbpaste
+  elif [[ -n "${WAYLAND_DISPLAY:-}" ]] && command -v wl-paste >/dev/null; then wl-paste --no-newline
+  elif command -v xclip >/dev/null; then xclip -selection clipboard -o
+  else return 1
+  fi
+}
+
+# Sends the paste shortcut. Linux: wtype works on wlroots desktops (sway, Hyprland), xdotool on X11. GNOME and KDE on
+# Wayland let no command-line tool type into other apps, so the CLI copies there and the app is the way to paste.
+paste_key() {
+  if [[ "$OS" == Darwin ]]; then
+    osascript -e 'tell application "System Events" to keystroke "v" using command down' >/dev/null 2>>"$ERR_FILE"
+  elif [[ -n "${WAYLAND_DISPLAY:-}" ]]; then
+    command -v wtype >/dev/null && wtype -M ctrl v -m ctrl 2>>"$ERR_FILE"
+  else
+    command -v xdotool >/dev/null && xdotool key --clearmodifiers ctrl+v 2>>"$ERR_FILE"
+  fi
+}
+
 paste_text() {
   local text="$1" saved=""
   if [[ "$RESTORE_CLIPBOARD" == on ]]; then
-    saved="$(pbpaste 2>/dev/null || true)"
+    saved="$(clipboard_read 2>/dev/null || true)"
   fi
-  printf '%s' "$text" | pbcopy
+  printf '%s' "$text" | clipboard_copy || fail "No clipboard tool found (install wl-clipboard or xclip)"
   [[ "$PASTE" == on ]] || return 0
-  osascript -e 'tell application "System Events" to keystroke "v" using command down' >/dev/null 2>>"$ERR_FILE" ||
-    fail "Paste failed: grant Accessibility access (text is on the clipboard)"
+  if ! paste_key; then
+    [[ "$OS" == Darwin ]] && fail "Paste failed: grant Accessibility access (text is on the clipboard)"
+    notify "Copied: press Ctrl+V to paste"
+    return 0
+  fi
   if [[ "$RESTORE_CLIPBOARD" == on && -n "$saved" ]]; then
     # Give the target app time to read the clipboard before restoring it.
     sleep 0.5
-    printf '%s' "$saved" | pbcopy
+    printf '%s' "$saved" | clipboard_copy
   fi
 }
 
@@ -1068,11 +1180,13 @@ format_resets() {
   local value="$1"
   if [[ "$value" =~ ^[0-9]+$ ]]; then
     ((value > 100000000000)) && value=$((value / 1000))
-    if [[ "$(date -r "$value" +%F)" == "$(date +%F)" ]]; then
-      date -r "$value" '+%l:%M %p' | sed 's/^ *//'
-    else
-      date -r "$value" '+%b %e, %l:%M %p' | sed 's/  */ /g'
-    fi
+    # perl, because BSD `date -r <epoch>` is `date -d @<epoch>` in GNU date.
+    perl -MPOSIX=strftime -e '
+      my @time = localtime shift;
+      my $format = strftime("%F", @time) eq strftime("%F", localtime) ? "%l:%M %p" : "%b %e, %l:%M %p";
+      (my $out = strftime($format, @time)) =~ s/^ +//;
+      $out =~ s/ {2,}/ /g;
+      print $out;' "$value"
   else
     printf '%s' "$value"
   fi
@@ -1330,8 +1444,18 @@ cmd_command() {
 
 selftest() {
   local wav="$STATE_DIR/selftest.wav"
-  say --data-format=LEI16@16000 -o "$wav" \
-    "Um, so, like, we need to uh deploy the kubernetes cluster to a w s, and then, you know, update the docker image in git hub."
+  local text="Um, so, like, we need to uh deploy the kubernetes cluster to a w s, and then, you know, update the docker image in git hub."
+  if command -v say >/dev/null; then
+    say --data-format=LEI16@16000 -o "$wav" "$text"
+  elif command -v espeak-ng >/dev/null && command -v sox >/dev/null; then
+    # espeak-ng writes 22 kHz; Whisper needs 16 kHz mono.
+    espeak-ng -w "$STATE_DIR/selftest-tts.wav" "$text"
+    sox "$STATE_DIR/selftest-tts.wav" -r 16000 -c 1 -b 16 "$wav"
+    rm -f "$STATE_DIR/selftest-tts.wav"
+  else
+    echo "selftest needs 'say' (macOS) or espeak-ng and sox (Linux: sudo apt install espeak-ng sox)" >&2
+    exit 1
+  fi
   run_file "$wav"
   rm -f "$wav"
 }

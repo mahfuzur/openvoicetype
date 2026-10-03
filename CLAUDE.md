@@ -42,6 +42,20 @@ hotkey -> pin the paste target (app, window, title; refuse password fields) and 
 - Scripts launched from Shortcuts, launchd or a GUI app get a minimal `PATH`. Always prepend
   `/opt/homebrew/bin:$HOME/.local/bin`.
 
+## Linux (M7, in progress, see docs/plans/M7-linux.md)
+
+- A native Rust + GTK4 app in `linux/` (workspace; `ovt-core` holds the logic ported from Swift, with the
+  `LogicSelfTest.swift` cases as tests). It runs the same `dictate.sh` with the same contract as the Mac app.
+- `dictate.sh` runs on both: `OS` (`uname -s`) switches only the folders and the desktop bits (sounds, notifications, the CLI's
+  paste). Linux: `STATE_DIR` is `$XDG_RUNTIME_DIR/voice-to-text`, logs are `~/.local/state/voice-to-text`, and config and
+  models follow `XDG_CONFIG_HOME`/`XDG_DATA_HOME`. macOS keeps its fixed paths whatever `XDG_*` says (the Swift app hardcodes them).
+- **No BSD-only commands** in shared code: use `file_stamp` (perl) instead of `stat -f`, perl `strftime` instead of `date -r`,
+  `has_default_route`/`tcp_reachable` instead of `route get`/`nc -G`. GNU `stat -f` doesn't fail, it prints file-system stats,
+  which made every run restart the servers.
+- **Gotcha:** Ubuntu 25.10+ ships the Rust coreutils (uutils): `sleep`, `wc`, `tr`… are one program that picks its tool
+  by its name, so a copy renamed (as tests do to fake a server) doesn't run. Test on `ubuntu:25.10` as well as 24.04.
+- Rust builds and tests run in Docker (`rust:1-bookworm`); Homebrew's cargo on the maintainer's Mac is broken (libgit2/llhttp).
+
 ## Calling Claude for cleanup
 
 The fastest invocation found so far (5.6 s on its own, 7–10 s inside the pipeline with haiku; mostly CLI startup).
@@ -279,7 +293,7 @@ env -u ANTHROPIC_API_KEY -u ANTHROPIC_AUTH_TOKEN MAX_THINKING_TOKENS=0 CLAUDE_CO
     the model (`command_source`) didn't have them, and puts back the tags `command_message` neutralized (`&lt;` + exact tag
     name).
   - Exit 0 prints the text; exit 3 means nothing to paste (the reason is in the result file). `COMMAND_TIMEOUT` is 30 s,
-    and the app's watchdog allows 50 s.
+    and the app's watchdog allows 75 s.
 - **Sessions.** `CommandSession` (in memory) keeps the original, the instructions and the current result. Follow-ups work
   for 60 s; Menu → Restore Original Text for 5 minutes.
 - **Logs.** `APP COMMAND start|pasted|copied|failed …` and `COMMAND target=…` lines never contain the text; the
@@ -291,7 +305,11 @@ env -u ANTHROPIC_API_KEY -u ANTHROPIC_AUTH_TOKEN MAX_THINKING_TOKENS=0 CLAUDE_CO
 
 - `./scripts/install.sh [--with-s1-mini] [--full-model]`: for the `dictate` CLI only. Links `~/.local/bin/dictate`, creates the
   config, downloads the compressed model (pinned, SHA-256 checked; skipped if either large-v3-turbo file exists), runs the self-test.
-- `./scripts/dictate.sh selftest`: runs speech synthesized with `say` through Whisper and Claude, with no mic or paste. Run it after any pipeline change.
+- `./scripts/dictate.sh selftest`: runs speech synthesized with `say` (Linux: espeak-ng) through Whisper and Claude, with no mic or paste. Run it after any pipeline change.
+- `scripts/test-dictate.sh`: the app contract (`refine` exit codes and result file, pre-started and one-shot Claude, limit,
+  offline, the online check, server pid checks, log rotation) against `scripts/testdata/fake-claude`, in a temporary HOME.
+  No Whisper or Claude login needed; CI runs it on macOS and Ubuntu. Run it after any `dictate.sh` change.
+- `cd linux && cargo fmt --check && cargo clippy --all-targets -- -D warnings && cargo test`: the Linux crates.
 - `./scripts/dictate.sh file <wav>`: processes an existing recording and prints the raw text, cleaned text and timings.
 - `./scripts/build-app.sh [--install]`: builds `app/` with SwiftPM into `app/build/VoiceToText.app`,
   bundling `scripts/dictate.sh`, `prompts/` and the helpers into it. `--install` copies it to `/Applications/OpenVoiceType.app` (the same name and place as the DMG, so there is one copy) and relaunches it.
