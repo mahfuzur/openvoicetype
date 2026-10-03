@@ -41,7 +41,9 @@ chmod 700 "$XDG_RUNTIME_DIR"
 if [[ "$WINDOWS" == on ]]; then
   STATE="$TMPDIR/voice-to-text" LOGS="$LOCALAPPDATA/voice-to-text/logs"
   # Windows paths, for a native program under test (dictate.sh converts them back).
+  # TMP too: Windows programs take the temp folder from TMP before TEMP (GetTempPath2).
   TEMP="$(cygpath -w "$TEMP")" APPDATA="$(cygpath -w "$APPDATA")" LOCALAPPDATA="$(cygpath -w "$LOCALAPPDATA")"
+  export TMP="$TEMP"
 elif [[ -n "$DICTATE" ]]; then
   # A program under test on macOS or Linux follows the XDG folders (ovt-core's paths).
   STATE="$XDG_RUNTIME_DIR/voice-to-text" LOGS="$HOME/.local/state/voice-to-text"

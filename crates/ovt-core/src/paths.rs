@@ -116,7 +116,7 @@ mod platform {
         known("LOCALAPPDATA", "AppData\\Local").join("voice-to-text")
     }
 
-    /// `%TEMP%\\voice-to-text`: in the user's own profile.
+    /// `%TEMP%\\voice-to-text`: in the user's own profile (Windows reads `TMP` first, then `TEMP`; both are normally the same).
     pub fn state_dir() -> PathBuf {
         std::env::temp_dir().join("voice-to-text")
     }
