@@ -1,0 +1,341 @@
+{
+   "about" : "Made by golden/make-claude.sh from dictate.sh claude_parse: do not edit.",
+   "cases" : [
+      {
+         "error" : "",
+         "exit" : 0,
+         "log" : "",
+         "name" : "stream-success",
+         "stdout" : "Hello world."
+      },
+      {
+         "error" : "",
+         "exit" : 0,
+         "log" : "",
+         "name" : "result-only",
+         "stdout" : "Done."
+      },
+      {
+         "error" : "",
+         "exit" : 0,
+         "log" : "",
+         "name" : "one-shot-object",
+         "stdout" : "Fixed text, with a comma."
+      },
+      {
+         "error" : "",
+         "exit" : 0,
+         "log" : "",
+         "name" : "assistant-only",
+         "stdout" : "Only the assistant."
+      },
+      {
+         "error" : "",
+         "exit" : 0,
+         "log" : "",
+         "name" : "assistant-mixed-content",
+         "stdout" : "Hello there."
+      },
+      {
+         "error" : "",
+         "exit" : 0,
+         "log" : "",
+         "name" : "empty-result-keeps-assistant",
+         "stdout" : "Answer A"
+      },
+      {
+         "error" : "",
+         "exit" : 0,
+         "log" : "",
+         "name" : "result-replaces-assistant",
+         "stdout" : "Answer B"
+      },
+      {
+         "error" : "",
+         "exit" : 0,
+         "log" : "",
+         "name" : "unicode-answer",
+         "stdout" : "Café — naïve ✓ 😀\nsecond line\n"
+      },
+      {
+         "error" : "limit\u001f1790000000\u001fUsage limit reached\n",
+         "exit" : 1,
+         "log" : "",
+         "name" : "limit-rejected-with-result",
+         "stdout" : ""
+      },
+      {
+         "error" : "limit\u001f1790000000000\u001f\n",
+         "exit" : 1,
+         "log" : "",
+         "name" : "limit-rejected-only",
+         "stdout" : ""
+      },
+      {
+         "error" : "limit\u001f4am\u001fSession limit reached. Resets at 4am.\n",
+         "exit" : 1,
+         "log" : "",
+         "name" : "limit-rejected-null-reset-text-reset",
+         "stdout" : ""
+      },
+      {
+         "error" : "",
+         "exit" : 0,
+         "log" : "<time> WARN claude usage: 85% of the plan limit used\n",
+         "name" : "allowed-warning",
+         "stdout" : "Fine."
+      },
+      {
+         "error" : "",
+         "exit" : 0,
+         "log" : "<time> WARN claude usage: ? of the plan limit used\n",
+         "name" : "allowed-warning-no-utilization",
+         "stdout" : "Fine."
+      },
+      {
+         "error" : "",
+         "exit" : 0,
+         "log" : "<time> WARN claude usage: 1.5 of the plan limit used\n<time> WARN claude usage: 90% of the plan limit used\n",
+         "name" : "allowed-warning-over-one",
+         "stdout" : "Fine."
+      },
+      {
+         "error" : "",
+         "exit" : 0,
+         "log" : "",
+         "name" : "rate-limit-info-not-an-object",
+         "stdout" : "Fine."
+      },
+      {
+         "error" : "limit\u001f\u001fAPI Error: 529 overloaded\n",
+         "exit" : 1,
+         "log" : "",
+         "name" : "api-retry-limit-then-error",
+         "stdout" : ""
+      },
+      {
+         "error" : "auth\u001f\u001f\n",
+         "exit" : 1,
+         "log" : "",
+         "name" : "api-retry-auth-only",
+         "stdout" : ""
+      },
+      {
+         "error" : "limit\u001f\u001f\n",
+         "exit" : 1,
+         "log" : "",
+         "name" : "api-retry-billing-then-auth",
+         "stdout" : ""
+      },
+      {
+         "error" : "",
+         "exit" : 1,
+         "log" : "",
+         "name" : "api-retry-other-error",
+         "stdout" : ""
+      },
+      {
+         "error" : "limit\u001f\u001fToo many requests\n",
+         "exit" : 1,
+         "log" : "",
+         "name" : "status-429",
+         "stdout" : ""
+      },
+      {
+         "error" : "auth\u001f\u001fInvalid bearer token\n",
+         "exit" : 1,
+         "log" : "",
+         "name" : "status-401",
+         "stdout" : ""
+      },
+      {
+         "error" : "auth\u001f\u001fForbidden\n",
+         "exit" : 1,
+         "log" : "",
+         "name" : "status-403-string",
+         "stdout" : ""
+      },
+      {
+         "error" : "error\u001f\u001fAPI Error: 500 Internal server error\n",
+         "exit" : 1,
+         "log" : "",
+         "name" : "status-500",
+         "stdout" : ""
+      },
+      {
+         "error" : "limit\u001f\u001fClaude AI usage limit reached|1790000000\n",
+         "exit" : 1,
+         "log" : "",
+         "name" : "text-limit-reached",
+         "stdout" : ""
+      },
+      {
+         "error" : "limit\u001f3pm (Europe/Berlin)\u001fYou've hit your limit · resets 3pm (Europe/Berlin)\n",
+         "exit" : 1,
+         "log" : "",
+         "name" : "text-hit-your-limit-resets",
+         "stdout" : ""
+      },
+      {
+         "error" : "limit\u001fOct 9, 11:30pm\u001fWeekly limit reached ∙ resets at Oct 9, 11:30pm\n",
+         "exit" : 1,
+         "log" : "",
+         "name" : "text-weekly-limit-resets-at",
+         "stdout" : ""
+      },
+      {
+         "error" : "auth\u001f\u001fInvalid API key · Please run /login\n",
+         "exit" : 1,
+         "log" : "",
+         "name" : "text-api-key-login",
+         "stdout" : ""
+      },
+      {
+         "error" : "auth\u001f\u001fNot logged in · Please run /login\n",
+         "exit" : 1,
+         "log" : "",
+         "name" : "text-not-logged-in",
+         "stdout" : ""
+      },
+      {
+         "error" : "auth\u001f\u001fOAuth token has expired. Please obtain a new token or refresh your existing token.\n",
+         "exit" : 1,
+         "log" : "",
+         "name" : "text-oauth-expired",
+         "stdout" : ""
+      },
+      {
+         "error" : "limit\u001f\u001fSomething failed\n",
+         "exit" : 1,
+         "log" : "",
+         "name" : "assistant-error-limit",
+         "stdout" : ""
+      },
+      {
+         "error" : "",
+         "exit" : 0,
+         "log" : "",
+         "name" : "assistant-error-auth-no-result",
+         "stdout" : "Invalid API key"
+      },
+      {
+         "error" : "error\u001f\u001fSomething went wrong with tabs and a newline and a unit separator\r end\n",
+         "exit" : 1,
+         "log" : "",
+         "name" : "generic-error-detail",
+         "stdout" : ""
+      },
+      {
+         "error" : "error\u001f\u001fÉrror — xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx\n",
+         "exit" : 1,
+         "log" : "",
+         "name" : "long-error-detail",
+         "stdout" : ""
+      },
+      {
+         "error" : "error\u001f\u001f\n",
+         "exit" : 1,
+         "log" : "",
+         "name" : "error-result-object",
+         "stdout" : ""
+      },
+      {
+         "error" : "error\u001f\u001fFailed somehow\n",
+         "exit" : 1,
+         "log" : "",
+         "name" : "is-error-string-one",
+         "stdout" : ""
+      },
+      {
+         "error" : "",
+         "exit" : 0,
+         "log" : "",
+         "name" : "is-error-zero",
+         "stdout" : "Not an error"
+      },
+      {
+         "error" : "",
+         "exit" : 1,
+         "log" : "",
+         "name" : "success-null-result",
+         "stdout" : ""
+      },
+      {
+         "error" : "error\u001f\u001fBoom\n",
+         "exit" : 1,
+         "log" : "",
+         "name" : "lines-after-result-ignored",
+         "stdout" : ""
+      },
+      {
+         "error" : "",
+         "exit" : 2,
+         "log" : "",
+         "name" : "non-json-only",
+         "stdout" : ""
+      },
+      {
+         "error" : "",
+         "exit" : 0,
+         "log" : "",
+         "name" : "non-json-then-answer",
+         "stdout" : "Still fine."
+      },
+      {
+         "error" : "",
+         "exit" : 2,
+         "log" : "",
+         "name" : "empty",
+         "stdout" : ""
+      },
+      {
+         "error" : "",
+         "exit" : 2,
+         "log" : "",
+         "name" : "whitespace-lines",
+         "stdout" : ""
+      },
+      {
+         "error" : "",
+         "exit" : 1,
+         "log" : "",
+         "name" : "unknown-events-only",
+         "stdout" : ""
+      },
+      {
+         "error" : "",
+         "exit" : 2,
+         "log" : "",
+         "name" : "no-type",
+         "stdout" : ""
+      },
+      {
+         "error" : "",
+         "exit" : 2,
+         "log" : "",
+         "name" : "type-zero-and-array",
+         "stdout" : ""
+      },
+      {
+         "error" : "",
+         "exit" : 0,
+         "log" : "",
+         "name" : "crlf-lines",
+         "stdout" : "CRLF ok"
+      },
+      {
+         "error" : "",
+         "exit" : 2,
+         "log" : "",
+         "name" : "garbage-after-json",
+         "stdout" : ""
+      },
+      {
+         "error" : "",
+         "exit" : 0,
+         "log" : "",
+         "name" : "numeric-result",
+         "stdout" : "42"
+      }
+   ]
+}
