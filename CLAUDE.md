@@ -44,7 +44,8 @@ hotkey -> pin the paste target (app, window, title; refuse password fields) and 
 
 ## Linux (M7, in progress, see docs/plans/M7-linux.md)
 
-- A native Rust + GTK4 app in `linux/` (workspace; `ovt-core` holds the logic ported from Swift, with the
+- A native Rust + GTK4 app in `linux/`, in the repo's Cargo workspace (root `Cargo.toml`; `crates/ovt-core` holds the logic
+  ported from Swift, shared with the Windows app, with the
   `LogicSelfTest.swift` cases as tests). It runs the same `dictate.sh` with the same contract as the Mac app.
 - `dictate.sh` runs on both: `OS` (`uname -s`) switches only the folders and the desktop bits (sounds, notifications, the CLI's
   paste). Linux: `STATE_DIR` is `$XDG_RUNTIME_DIR/voice-to-text`, logs are `~/.local/state/voice-to-text`, and config and
@@ -309,7 +310,7 @@ env -u ANTHROPIC_API_KEY -u ANTHROPIC_AUTH_TOKEN MAX_THINKING_TOKENS=0 CLAUDE_CO
 - `scripts/test-dictate.sh`: the app contract (`refine` exit codes and result file, pre-started and one-shot Claude, limit,
   offline, the online check, server pid checks, log rotation) against `scripts/testdata/fake-claude`, in a temporary HOME.
   No Whisper or Claude login needed; CI runs it on macOS and Ubuntu. Run it after any `dictate.sh` change.
-- `cd linux && cargo fmt --check && cargo clippy --all-targets -- -D warnings && cargo test`: the Linux crates.
+- `cargo fmt --check && cargo clippy --all-targets -- -D warnings && cargo test` (repo root): the Rust crates.
 - `./scripts/dictate.sh file <wav>`: processes an existing recording and prints the raw text, cleaned text and timings.
 - `./scripts/build-app.sh [--install]`: builds `app/` with SwiftPM into `app/build/VoiceToText.app`,
   bundling `scripts/dictate.sh`, `prompts/` and the helpers into it. `--install` copies it to `/Applications/OpenVoiceType.app` (the same name and place as the DMG, so there is one copy) and relaunches it.

@@ -8,7 +8,7 @@ Requested in [issue #14](https://github.com/mahfuzur/openvoicetype/issues/14).
 
 **Status: ◐ P0 done on the Mac side (2026-09-30), except a real dictation in the rebuilt Mac app.** `dictate.sh`,
 `install.sh` and the eval harness run on Linux; `scripts/test-dictate.sh` checks the contract on both (19/19 on macOS and in
-an Ubuntu 24.04 container); `linux/crates/ovt-core` has 33 passing tests; CI has a Linux job. Next: P1 on the Ubuntu PC.
+an Ubuntu 24.04 container); `ovt-core` (now `crates/ovt-core`) has 33 passing tests; CI has a Linux job. Next: P1 on the Ubuntu PC.
 
 ## Context
 
@@ -68,7 +68,7 @@ linux/gnome-extension/openvoicetype@mahfuzur.github.io/   extension.js + metadat
 The Rust app plays the role of `AppDelegate`/`Dictation`/`Paster`/`PasteTarget`/`SelectionReader`, and `dictate.sh` stays the
 single pipeline, so every prompt fix and eval reaches both platforms.
 
-**Repo layout:** `linux/Cargo.toml` (a workspace), `linux/crates/{ovt-core,ovt-audio,ovt-desktop,openvoicetype}`,
+**Repo layout:** the root `Cargo.toml` (one workspace with Windows), `crates/ovt-core` (shared), `linux/crates/{ovt-audio,ovt-desktop,openvoicetype}`,
 `linux/gnome-extension/`, `linux/kwin-script/`, `linux/packaging/{deb,rpm,desktop,udev?}`, and `scripts/build-linux.sh`.
 
 **Key crates:**
@@ -259,7 +259,7 @@ headless GNOME Shell 50 except multi-type clipboard (no rich paste on GNOME this
 
 ## Verification
 
-- **Every phase:** `shellcheck scripts/*.sh`; `cargo fmt --check && cargo clippy -- -D warnings && cargo test` in `linux/`.
+- **Every phase:** `shellcheck scripts/*.sh`; `cargo fmt --check && cargo clippy -- -D warnings && cargo test` at the repo root.
 - **Mac regression after any `dictate.sh` change:** `./scripts/dictate.sh selftest`, `evals/run.py` (≥ 90% Haiku),
   `evals/run.py --command`, `./scripts/build-app.sh --install` and a real dictation, swap and command.
 - **On Ubuntu:**

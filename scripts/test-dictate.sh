@@ -108,20 +108,6 @@ if [[ "$(uname -s)" == Linux ]]; then
   check "state folder without XDG_RUNTIME_DIR" "$(mode "$fallback")" 700
 fi
 
-# Windows: the pre-started Claude is a native program reading a fifo that bash holds open (claude_prestart). Checked
-# with sort.exe, which, like claude.exe, is not an MSYS program.
-if [[ "$WINDOWS" == on ]]; then
-  fifo="$SANDBOX/fifo-test"
-  mkfifo "$fifo"
-  (exec "$(cygpath -u "$SYSTEMROOT")/System32/sort.exe" <"$fifo" >"$SANDBOX/fifo-out" 2>&1) &
-  reader=$!
-  exec 4>"$fifo"
-  printf 'b\nA\n' >&4
-  exec 4>&-
-  wait "$reader"
-  check "fifo into a native program" "$(tr -d '\r' <"$SANDBOX/fifo-out" | tr '\n' ' ')" "A b "
-fi
-
 # srv_running: our server's pid counts, a reused pid doesn't, and an upgraded (deleted) binary still does.
 eval "$(sed -n '/^srv_file()/p; /^srv_binary()/p; /^srv_running()/,/^}/p' "$D")"
 STATE_DIR="$SANDBOX/servers"

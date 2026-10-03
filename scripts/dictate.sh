@@ -69,8 +69,9 @@ CLAUDE_MODEL="${VTT_CLAUDE_MODEL:-${CLAUDE_MODEL:-haiku}}"
 CLAUDE_TIMEOUT="${CLAUDE_TIMEOUT:-15}"
 # Extended thinking made a simple cleanup take 30 s (2,500 thinking tokens for 50 output tokens). Off by default.
 CLAUDE_THINKING_TOKENS="${CLAUDE_THINKING_TOKENS:-0}"
-# Start the claude process before the transcript is ready (see claude_prestart).
-CLAUDE_PRESTART="${CLAUDE_PRESTART:-on}"
+# Start the claude process before the transcript is ready (see claude_prestart). Not on Windows: a native claude.exe
+# can't read an MSYS fifo ("The handle is invalid"; the Windows app runs its own pipeline, docs/plans/M8-windows.md).
+if [[ "$OS" == Windows ]]; then CLAUDE_PRESTART="${CLAUDE_PRESTART:-off}"; else CLAUDE_PRESTART="${CLAUDE_PRESTART:-on}"; fi
 CLAUDE_BIN="${VTT_CLAUDE_BIN:-${CLAUDE_BIN:-claude}}"
 # An exported ANTHROPIC_API_KEY (or ANTHROPIC_AUTH_TOKEN) makes `claude -p` bill the API instead of the user's plan.
 # Our calls drop them, unless this is on.

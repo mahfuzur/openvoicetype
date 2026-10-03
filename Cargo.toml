@@ -1,8 +1,8 @@
-# OpenVoiceType for Linux (see docs/plans/M7-linux.md). The pipeline is the shared scripts/dictate.sh; these crates are
-# the app around it.
+# OpenVoiceType's Rust code: the logic shared by the Linux and Windows apps (crates/), and each app (linux/crates/,
+# windows/crates/; docs/plans/M7-linux.md and M8-windows.md). The macOS app is Swift (app/).
 [workspace]
 resolver = "2"
-members = ["crates/ovt-core"]
+members = ["crates/*"]
 
 [workspace.package]
 version = "0.5.0" # the release script sets the tag

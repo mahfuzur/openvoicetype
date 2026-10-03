@@ -5,7 +5,8 @@ the same privacy guarantees (audio stays local, no API key, the user's own `clau
 
 **Status legend:** ☐ to do · ◐ in progress · ☑ done
 
-**Status: ◐ W0 started (2026-10-03).**
+**Status: ◐ W0 started (2026-10-03).** The Git Bash gate failed on the first CI run (below), so the Windows app runs the
+cleanup pipeline in Rust (`crates/ovt-pipeline`), checked against `dictate.sh` by golden tests and the shared evals.
 
 ## Context
 
@@ -16,15 +17,27 @@ evals), and the Swift app's logic ported once to Rust in `ovt-core`, which both 
 **Decisions made:**
 - **Stack:** Rust. Win32 through `windows` (windows-rs) for hotkeys, input, clipboard, UI Automation and the overlay;
   `tray-icon` + `muda` for the notification-area icon and menu; Slint (Fluent style) for the Settings and setup windows.
-- **Location:** the same repo, in `windows/` (a Cargo workspace). It uses `linux/crates/ovt-core` by path, so the logic and
-  its tests stay in one place.
-- **Pipeline:** the app runs the same `dictate.sh` with the same contract, through **Git for Windows' bash**. Git Bash
-  ships bash, perl 5.42 (with `JSON::PP`, `Time::HiRes`, `IO::Socket::IP`, `POSIX`), curl, `mkfifo`, `/proc`, `timeout`
-  and `sha256sum`: everything the script uses. The setup window installs Git for Windows when it's missing
-  (`winget install Git.Git`).
-- **Gate (W0/W1):** if the script costs more than ~300 ms extra per dictation under Git Bash (process creation is slow
-  on Windows), or the fifo pre-start can't feed the native `claude.exe`, the app takes over only that part: it starts
-  `claude.exe` itself and holds its stdin, and the script keeps everything else.
+- **Location:** the same repo. One Cargo workspace at the root: `crates/` holds what Linux and Windows share
+  (`ovt-core`, `ovt-pipeline`), `windows/crates/` the Windows app.
+- **Pipeline: in Rust (`crates/ovt-pipeline`), not `dictate.sh`.** The first plan ran `dictate.sh` through Git for Windows'
+  bash, with a gate (W0). It failed on both counts on `windows-latest` (2026-10-03):
+  - **Speed:** `refine` costs 2,228 ms of script time under Git Bash, against 209 ms on Linux. A profile shows no hot spot:
+    each process start costs 15–60 ms, and `refine` starts about 100 (subshells, perl, grep, date, tr).
+  - **Pre-start:** a native program can't read an MSYS fifo ("The handle is invalid"), so the pre-started `claude.exe`
+    can't work the way it does on macOS and Linux.
+  
+  Everything else passed (17 of 18 contract checks on the first run), and `dictate.sh` keeps working in Git Bash for the
+  CLI (one-shot Claude calls there). The app instead ports the cleanup half of the script to Rust: prompt assembly,
+  the Claude pre-start and one-shot calls with the same flags and failure classes, the OpenAI-compatible endpoint, S1-mini,
+  the online check, the meaning guard, post-processing, and the result details. It reads the same `prompts/` and
+  `dictionary.txt`, and gains no Git dependency (Claude Code no longer needs Git on Windows either).
+- **Keeping two pipelines equal:**
+  - **Golden tests:** `scripts/make-golden.sh` runs `dictate.sh`'s own functions (`post_process`, `meaning_guard`,
+    `user_message`, `system_prompt`, `claude_parse`…) over `tests/golden/inputs.json` and writes `expected.json`;
+    `ovt-pipeline`'s tests must match it. CI regenerates it and fails on a difference, so a change to the script without
+    the Rust side (or the reverse) is caught.
+  - **The same contract:** an `ovt` CLI (`refine`, `command`, `transcribe`, `selftest`) with `dictate.sh`'s environment
+    variables, exit codes and result file, so `scripts/test-dictate.sh` and `evals/run.py` run against both.
 - **Test machine:** the maintainer's Windows 11 PC. CI runs on GitHub's `windows-latest` (Windows Server 2025).
 - **GPU:** whisper.cpp and llama.cpp built with Vulkan (NVIDIA, AMD and Intel) plus a CPU build, chosen at startup.
 
@@ -67,7 +80,8 @@ OpenVoiceType.exe (Rust, one binary, no console window)
 ├── overlay    a layered, click-through, no-activate, topmost window (WS_EX_LAYERED|TRANSPARENT|NOACTIVATE|TOOLWINDOW)
 ├── tray       tray-icon + muda: the icon (still waveform, red dot while working) and the short menu
 ├── ui         Slint windows: Settings (6 panes), first-run setup
-└── runs scripts/dictate.sh through Git Bash with the SAME contract as Dictation.swift (unchanged pipeline)
+└── ovt-pipeline (shared crate): Whisper (whisper-server kept loaded, whisper-cli fallback) and the cleanup, the same as
+    dictate.sh's, behind the same contract (exit codes, result details); the servers are child processes of the app
 ```
 
 **Repo layout:** `windows/Cargo.toml` (a workspace), `windows/crates/openvoicetype` (the app), `windows/packaging/` (Inno Setup
@@ -108,39 +122,33 @@ script, icon), `scripts/build-windows-deps.ps1` (whisper.cpp + llama.cpp, Vulkan
 
 **Windows setup window steps:**
 1. Microphone: Windows asks once per app (Settings ▸ Privacy ▸ Microphone); setup checks sound arrives.
-2. **Git for Windows** (the pipeline's bash and perl): found, or installed with `winget install --id Git.Git -e`.
-3. Speech model download.
-4. Cleanup: Claude Code installed (`irm https://claude.ai/install.ps1 | iex` in a PowerShell window) and signed in
-   (`claude auth login`), or S1-mini.
-5. Pin the tray icon, then try it.
+2. Speech model download.
+3. Cleanup: Claude Code installed (`irm https://claude.ai/install.ps1 | iex` in a PowerShell window) and signed in
+   (`claude auth login`), or S1-mini. `claude.exe` is looked for in `%USERPROFILE%\.local\bin`, the WinGet links folder,
+   npm's `claude.cmd`, then `PATH` (the native installer doesn't add its folder to `PATH`).
+4. Pin the tray icon, then try it.
 
 ## Phases (one milestone, one release; checkpoints are internal)
 
 ### ◐ W0: Shared groundwork, from the Mac and CI (no Windows PC needed)
 
-- `dictate.sh` on Git Bash:
-  - `OS` is `Windows` for `MINGW*|MSYS*|UCRT*|CLANG*`; folders as in the table (from `cygpath -u "$APPDATA"` etc.).
-  - `MSYS_NO_PATHCONV=1` / `MSYS2_ARG_CONV_EXCL='*'` so arguments to native programs aren't rewritten; Windows paths
-    passed to native programs through `cygpath -w` where needed.
-  - `\r` stripped from native programs' output.
-  - `srv_running`: `/proc/<pid>/exe` exists in MSYS; compare without `.exe`.
-  - the ownership check on the state folder is skipped (`%TEMP%` is per-user; NTFS owners can be the Administrators group).
-  - sounds (`SystemSounds` through PowerShell is too slow: the app plays them; the CLI stays quiet) and notifications
-    (none from the CLI on Windows).
-- `.gitattributes`: `*.sh`, `scripts/testdata/*`, `prompts/**` with `eol=lf` (a CRLF checkout breaks bash).
-- `scripts/test-dictate.sh` passes in Git Bash on `windows-latest`, and measures the script's own overhead (`refine`
-  with the fake Claude) to compare with macOS and Linux.
-- A fifo test on CI: a native program (`sort.exe`) reading its stdin from an MSYS fifo, as the pre-started Claude does.
-- `ovt-core` builds and tests on Windows: Unix-only parts behind `cfg(unix)`, a Windows `paths` module, the watchdog with
-  `TerminateProcess`-free termination (close stdin, then kill the bash process tree).
-- CI: a `windows` job (Git Bash contract test, `cargo fmt/clippy/test` for `ovt-core` and `windows/`).
-- **Checkpoint:** CI green on all three; the Mac `selftest` unchanged.
+- ☑ `dictate.sh` in Git Bash (for the CLI and the measurement): `OS=Windows`, Windows folders, no argument rewriting for
+  native programs, `/dev/clipboard`, `\r`-tolerant Whisper output, `.exe`-aware server check, the Windows voice for
+  `selftest`, pre-start off. `.gitattributes` keeps LF for scripts and prompts. `test-dictate.sh` passes in Git Bash.
+- ☑ CI: a `windows` job (the contract test in Git Bash, `cargo fmt/clippy/test`).
+- ☑ The Rust code is one workspace at the root; `ovt-core` moved to `crates/` and builds on Windows (Unix-only parts
+  behind `cfg(unix)`, Windows folders in `paths`, a portable `run_id`).
+- ☐ `crates/ovt-pipeline`: the cleanup pipeline in Rust, with the golden tests.
+- ☐ The `ovt` CLI with `dictate.sh`'s contract; `test-dictate.sh` and `evals/run.py` run against it.
+- **Checkpoint:** CI green on all three; `test-dictate.sh` passes against both `dictate.sh` and `ovt`; evals on Haiku
+  ≥ 90% through `ovt` (on the PC, or on Linux in CI with a fake Claude for the contract part).
 
 ### ☐ W1: Spikes on the Windows PC (half a day; they set the final scope)
 
 `windows/spike/spike.ps1` walks through them and writes a report:
-1. **Pipeline:** `dictate.sh selftest` with the real `claude.exe` and `whisper-server.exe` (Windows SAPI voice instead of
-   `say`); the pre-started Claude through the fifo; the 3 s stdin rule of `claude -p`; Unicode in and out; timings.
+1. **Pipeline:** `ovt selftest` with the real `claude.exe` and `whisper-server.exe` (the Windows voice instead of `say`);
+   the pre-started Claude through a pipe (and the 3 s stdin rule of `claude -p`); Unicode in and out; timings;
+   `evals/run.py --bin ovt.exe`.
 2. **Hotkey:** hold Ctrl+Alt+Space: one press, one release; Esc only while recording; AltGr layouts.
 3. **Paste:** Notepad, Word, Chrome, Edge, VS Code, Windows Terminal (Shift+Insert), an elevated Notepad (must be detected).
 4. **UIA:** a password box in Edge and Chrome, selection and text before the caret in Notepad, Word, Chrome, VS Code.
@@ -177,7 +185,8 @@ SHA-256 checks, S1-mini, OpenAI-compatible endpoint with the key in Credential M
 
 ## Reuse (don't rewrite)
 
-- `scripts/dictate.sh`, `prompts/`, `evals/` (the eval harness gains Windows speech synthesis for `--e2e`).
+- `prompts/`, `evals/` (the eval harness gains `--bin` and Windows speech synthesis for `--e2e`), and `dictate.sh` as the
+  specification of `ovt-pipeline` (golden tests).
 - `ovt-core`: command planning, paste-target rules, history, dictionary, rich text, settings, modes, models, updater,
   the script contract and watchdog.
 - The Mac app's behaviour as the spec, and `LogicSelfTest.swift`'s cases as tests.
@@ -193,7 +202,8 @@ SHA-256 checks, S1-mini, OpenAI-compatible endpoint with the key in Credential M
 
 ## Risks
 
-1. **Git Bash speed.** Every subshell costs a process on Windows. W0 measures it; the gate above limits the damage.
+1. **Two pipelines.** `ovt-pipeline` can drift from `dictate.sh`. The golden tests, the shared contract test and the evals
+   are the guard; a pipeline change isn't done until both pass.
 2. **Signing.** Smart App Control blocks unsigned apps outright. SignPath Foundation's approval isn't guaranteed.
 3. **UIA gaps:** Electron apps and some terminals expose little; swap and Command Mode fall back to copy there, as on a Mac
    without Accessibility.

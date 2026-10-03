@@ -97,14 +97,14 @@ mod tests {
 
     #[test]
     fn catalog_matches_install_sh() {
-        let install = include_str!("../../../../scripts/install.sh");
+        let install = include_str!("../../../scripts/install.sh");
         for model in [DEFAULT_WHISPER, FULL_WHISPER, S1_MINI] {
             assert!(install.contains(model.sha256), "{} checksum differs from install.sh", model.file_name);
         }
         assert!(
             install.contains(WHISPER_REPO.trim_end_matches('/')) && install.contains(S1_REPO.trim_end_matches('/'))
         );
-        let swift = include_str!("../../../../app/Sources/VoiceToText/ModelManager.swift");
+        let swift = include_str!("../../../app/Sources/VoiceToText/ModelManager.swift");
         for model in WHISPER.iter().chain([&S1_MINI]) {
             assert!(swift.contains(model.sha256), "{} checksum differs from ModelManager.swift", model.file_name);
         }

@@ -60,7 +60,6 @@ jobs:
         run: scripts/test-dictate.sh
 
       - name: Check and test the Rust crates
-        working-directory: linux
         run: |
           cargo fmt --check
           cargo clippy --all-targets --locked -- -D warnings
@@ -83,18 +82,8 @@ jobs:
       - name: Test the dictate.sh contract
         run: scripts/test-dictate.sh
 
-      # Temporary (W0): where refine spends its time under Git Bash.
-      - name: Profile refine
-        if: always()
+      - name: Check and test the Rust crates
         run: |
-          export HOME="$RUNNER_TEMP/h" TEMP="$RUNNER_TEMP/t" APPDATA="$RUNNER_TEMP/r" LOCALAPPDATA="$RUNNER_TEMP/l"
-          mkdir -p "$HOME" "$TEMP"
-          export VTT_CLAUDE_BIN="$PWD/scripts/testdata/fake-claude" VTT_QUIET=on ONLINE_CHECK=off
-          printf 'warm up' | bash scripts/dictate.sh refine >/dev/null
-          t0=$(date +%s%3N); printf 'x' | bash -c 'exit 0'; t1=$(date +%s%3N); echo "one bash: $((t1-t0)) ms"
-          t0=$(date +%s%3N); perl -e 1; t1=$(date +%s%3N); echo "one perl: $((t1-t0)) ms"
-          t0=$(date +%s%3N); for i in 1 2 3 4 5 6 7 8 9 10; do x=$(printf a | tr a b); done; t1=$(date +%s%3N); echo "10 subshell pipes: $((t1-t0)) ms"
-          t0=$(date +%s%3N); bash "$VTT_CLAUDE_BIN" --help >/dev/null; t1=$(date +%s%3N); echo "fake claude --help: $((t1-t0)) ms"
-          printf 'please send the report by friday' | PS4='+ ${EPOCHREALTIME} ${FUNCNAME[0]:-main}:${LINENO} ' bash -x scripts/dictate.sh refine 2>"$RUNNER_TEMP/trace" >/dev/null || true
-          perl -ne 'if (/^\++ (\d+\.\d+) (\S+) (.*)/) { if (defined $p) { push @g, [($1-$p)*1000, $pl] } $p=$1; $pl="$2 $3"; } END { printf "total traced: %.0f ms\n", ($p - $g[0][0]/1000 - 0) ; for (sort { $b->[0] <=> $a->[0] } @g) { printf "%6.0f ms  %s\n", $_->[0], substr($_->[1],0,150); last if ++$n >= 40 } }' "$RUNNER_TEMP/trace"
-          echo "trace lines: $(wc -l < "$RUNNER_TEMP/trace")"
+          cargo fmt --check
+          cargo clippy --all-targets --locked -- -D warnings
+          cargo test --locked
