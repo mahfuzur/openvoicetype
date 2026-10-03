@@ -1,0 +1,144 @@
+{
+  "about": "Event streams for claude_parse (golden/make-claude.sh writes golden/claude.json from them). Each line is a JSON object (written with sorted keys, compact) or a raw string.",
+  "cases": [
+    {"name": "stream-success", "events": [
+      {"session_id": "s", "subtype": "init", "type": "system"},
+      {"message": {"content": [{"text": "Hello world.", "type": "text"}], "role": "assistant"}, "type": "assistant"},
+      {"is_error": false, "result": "Hello world.", "subtype": "success", "type": "result"}
+    ]},
+    {"name": "result-only", "events": [{"result": "Done.", "type": "result"}]},
+    {"name": "one-shot-object", "events": [
+      {"duration_ms": 1234, "is_error": false, "result": "Fixed text, with a comma.", "subtype": "success", "type": "result", "usage": {"input_tokens": 487, "output_tokens": 9}}
+    ]},
+    {"name": "assistant-only", "events": [
+      {"subtype": "init", "type": "system"},
+      {"message": {"content": [{"text": "Only the assistant.", "type": "text"}]}, "type": "assistant"}
+    ]},
+    {"name": "assistant-mixed-content", "events": [
+      {"message": {"content": [{"text": "Hello ", "type": "text"}, {"id": "t", "name": "x", "type": "tool_use"}, "stray", {"text": "there.", "type": "text"}]}, "type": "assistant"}
+    ]},
+    {"name": "empty-result-keeps-assistant", "events": [
+      {"message": {"content": [{"text": "Answer A", "type": "text"}]}, "type": "assistant"},
+      {"is_error": false, "result": "", "type": "result"}
+    ]},
+    {"name": "result-replaces-assistant", "events": [
+      {"message": {"content": [{"text": "Answer A", "type": "text"}]}, "type": "assistant"},
+      {"result": "Answer B", "type": "result"}
+    ]},
+    {"name": "unicode-answer", "events": [{"result": "Café — naïve ✓ 😀\nsecond line\n", "type": "result"}]},
+    {"name": "limit-rejected-with-result", "events": [
+      {"subtype": "init", "type": "system"},
+      {"rate_limit_info": {"rateLimitType": "five_hour", "resetsAt": 1790000000, "status": "rejected"}, "type": "rate_limit_event"},
+      {"is_error": true, "result": "Usage limit reached", "type": "result"}
+    ]},
+    {"name": "limit-rejected-only", "events": [
+      {"rate_limit_info": {"resetsAt": 1790000000000, "status": "rejected"}, "type": "rate_limit_event"}
+    ]},
+    {"name": "limit-rejected-null-reset-text-reset", "events": [
+      {"rate_limit_info": {"resetsAt": null, "status": "rejected"}, "type": "rate_limit_event"},
+      {"is_error": true, "result": "Session limit reached. Resets at 4am.", "type": "result"}
+    ]},
+    {"name": "allowed-warning", "events": [
+      {"rate_limit_info": {"status": "allowed_warning", "utilization": 0.85}, "type": "rate_limit_event"},
+      {"result": "Fine.", "type": "result"}
+    ]},
+    {"name": "allowed-warning-no-utilization", "events": [
+      {"rate_limit_info": {"status": "allowed_warning"}, "type": "rate_limit_event"},
+      {"result": "Fine.", "type": "result"}
+    ]},
+    {"name": "allowed-warning-over-one", "events": [
+      {"rate_limit_info": {"status": "allowed_warning", "utilization": 1.5}, "type": "rate_limit_event"},
+      {"rate_limit_info": {"status": "allowed_warning", "utilization": "0.905"}, "type": "rate_limit_event"},
+      {"rate_limit_info": {"status": "allowed", "utilization": 0.2}, "type": "rate_limit_event"},
+      {"result": "Fine.", "type": "result"}
+    ]},
+    {"name": "rate-limit-info-not-an-object", "events": [
+      {"rate_limit_info": "rejected", "type": "rate_limit_event"},
+      {"result": "Fine.", "type": "result"}
+    ]},
+    {"name": "api-retry-limit-then-error", "events": [
+      {"attempt": 1, "error": "rate_limit", "subtype": "api_retry", "type": "system"},
+      {"is_error": true, "result": "API Error: 529 overloaded", "type": "result"}
+    ]},
+    {"name": "api-retry-auth-only", "events": [
+      {"error": "authentication_failed", "subtype": "api_retry", "type": "system"}
+    ]},
+    {"name": "api-retry-billing-then-auth", "events": [
+      {"error": "billing_error", "subtype": "api_retry", "type": "system"},
+      {"error": "oauth_org_not_allowed", "subtype": "api_retry", "type": "system"}
+    ]},
+    {"name": "api-retry-other-error", "events": [
+      {"error": "server_error", "subtype": "api_retry", "type": "system"}
+    ]},
+    {"name": "status-429", "events": [
+      {"api_error_status": 429, "is_error": true, "result": "Too many requests", "type": "result"}
+    ]},
+    {"name": "status-401", "events": [
+      {"api_error_status": 401, "is_error": true, "result": "Invalid bearer token", "type": "result"}
+    ]},
+    {"name": "status-403-string", "events": [
+      {"api_error_status": "403", "is_error": true, "result": "Forbidden", "type": "result"}
+    ]},
+    {"name": "status-500", "events": [
+      {"api_error_status": 500, "is_error": true, "result": "API Error: 500 Internal server error", "type": "result"}
+    ]},
+    {"name": "text-limit-reached", "events": [
+      {"is_error": true, "result": "Claude AI usage limit reached|1790000000", "type": "result"}
+    ]},
+    {"name": "text-hit-your-limit-resets", "events": [
+      {"is_error": true, "result": "You've hit your limit · resets 3pm (Europe/Berlin)", "type": "result"}
+    ]},
+    {"name": "text-weekly-limit-resets-at", "events": [
+      {"is_error": true, "result": "Weekly limit reached ∙ resets at Oct 9, 11:30pm", "type": "result"}
+    ]},
+    {"name": "text-api-key-login", "events": [
+      {"is_error": true, "result": "Invalid API key · Please run /login", "type": "result"}
+    ]},
+    {"name": "text-not-logged-in", "events": [
+      {"is_error": true, "result": "Not logged in · Please run /login", "type": "result"}
+    ]},
+    {"name": "text-oauth-expired", "events": [
+      {"is_error": true, "result": "OAuth token has expired. Please obtain a new token or refresh your existing token.", "type": "result"}
+    ]},
+    {"name": "assistant-error-limit", "events": [
+      {"error": "rate_limit", "message": {"content": [{"text": "API Error: Rate limit", "type": "text"}]}, "type": "assistant"},
+      {"is_error": true, "result": "Something failed", "type": "result"}
+    ]},
+    {"name": "assistant-error-auth-no-result", "events": [
+      {"error": "authentication_failed", "message": {"content": [{"text": "Invalid API key", "type": "text"}]}, "type": "assistant"}
+    ]},
+    {"name": "generic-error-detail", "events": [
+      {"is_error": true, "result": "Something went wrong\twith\t\ttabs\nand a newline\u001fand a unit separator\r\nend", "type": "result"}
+    ]},
+    {"name": "long-error-detail", "events": [
+      {"is_error": true, "result": "Érror — xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxééé the end is cut", "type": "result"}
+    ]},
+    {"name": "error-result-object", "events": [
+      {"is_error": true, "result": {"message": "nested"}, "type": "result"}
+    ]},
+    {"name": "is-error-string-one", "events": [
+      {"is_error": "1", "result": "Failed somehow", "type": "result"}
+    ]},
+    {"name": "is-error-zero", "events": [
+      {"is_error": 0, "result": "Not an error", "type": "result"}
+    ]},
+    {"name": "success-null-result", "events": [
+      {"result": null, "type": "result"}
+    ]},
+    {"name": "lines-after-result-ignored", "events": [
+      {"is_error": true, "result": "Boom", "type": "result"},
+      "this line isn't JSON",
+      {"result": "late", "type": "result"}
+    ]},
+    {"name": "non-json-only", "events": ["Error: unknown option '--tools'"]},
+    {"name": "non-json-then-answer", "events": ["warning: something", {"result": "Still fine.", "type": "result"}]},
+    {"name": "empty", "events": []},
+    {"name": "whitespace-lines", "events": ["", "   ", "\t"]},
+    {"name": "unknown-events-only", "events": [{"subtype": "init", "type": "system"}, {"type": "user"}]},
+    {"name": "no-type", "events": [{"foo": 1}]},
+    {"name": "type-zero-and-array", "events": [{"type": "0"}, "[1,2]", "\"string\""]},
+    {"name": "crlf-lines", "events": ["{\"type\":\"system\",\"subtype\":\"init\"}\r", "{\"type\":\"result\",\"result\":\"CRLF ok\"}\r"]},
+    {"name": "garbage-after-json", "events": ["{\"type\":\"result\",\"result\":\"x\"} trailing"]},
+    {"name": "numeric-result", "events": [{"result": 42, "type": "result"}]}
+  ]
+}
