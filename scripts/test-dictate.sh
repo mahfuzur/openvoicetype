@@ -1,9 +1,9 @@
 #!/usr/bin/env bash
-# Tests dictate.sh's app contract on macOS and Linux without a microphone, Whisper or a Claude login: `refine` with
+# Tests dictate.sh's app contract on macOS, Linux and Windows (Git Bash) without a microphone, Whisper or a Claude login: `refine` with
 # cleanup off, the pre-started and one-shot Claude calls (scripts/testdata/fake-claude), a usage limit, offline, the
 # online check, the server pid check and log rotation. Runs in a temporary HOME, so your logs and settings are untouched.
 #
-#   scripts/test-dictate.sh        (CI runs it on both platforms)
+#   scripts/test-dictate.sh        (CI runs it on all three; on Windows, from Git Bash)
 set -uo pipefail
 
 REPO_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
@@ -11,6 +11,7 @@ D="$REPO_DIR/scripts/dictate.sh"
 SANDBOX="$(mktemp -d)"
 trap 'rm -rf "$SANDBOX"' EXIT
 export HOME="$SANDBOX/home" TMPDIR="$SANDBOX/tmp" XDG_RUNTIME_DIR="$SANDBOX/run"
+export TEMP="$SANDBOX/tmp" APPDATA="$SANDBOX/roaming" LOCALAPPDATA="$SANDBOX/local" # Windows' folders
 unset XDG_CONFIG_HOME XDG_DATA_HOME XDG_STATE_HOME VTT_CONFIG
 export VTT_CLAUDE_BIN="$REPO_DIR/scripts/testdata/fake-claude" VTT_QUIET=on
 # No connection to api.anthropic.com before each fake Claude call, and a default route even with no network (stubs in
@@ -23,7 +24,10 @@ printf '#!/bin/sh\necho "   route to: default"\n' > "$HOME/.local/bin/route"
 chmod +x "$HOME/.local/bin/ip" "$HOME/.local/bin/route"
 mkdir -p "$HOME" "$TMPDIR" "$XDG_RUNTIME_DIR"
 chmod 700 "$XDG_RUNTIME_DIR"
-if [[ "$(uname -s)" == Linux ]]; then
+case "$(uname -s)" in MINGW* | MSYS* | UCRT* | CLANG*) WINDOWS=on ;; *) WINDOWS=off ;; esac
+if [[ "$WINDOWS" == on ]]; then
+  STATE="$TMPDIR/voice-to-text" LOGS="$LOCALAPPDATA/voice-to-text/logs"
+elif [[ "$(uname -s)" == Linux ]]; then
   STATE="$XDG_RUNTIME_DIR/voice-to-text" LOGS="$HOME/.local/state/voice-to-text"
 else
   STATE="$TMPDIR/voice-to-text" LOGS="$HOME/Library/Logs/voice-to-text"
@@ -46,13 +50,17 @@ mtime() { perl -e 'print ((stat $ARGV[0])[9])' "$1"; }
 # Cleanup off: only post-processing (email addresses are lower-cased).
 out="$(printf 'mail me at Bob@Example.COM today' | VTT_REFINE=off bash "$D" refine)"
 check "refine with cleanup off" "$? $out" "0 mail me at bob@example.com today"
-check "state folder is private" "$(mode "$STATE")" 700
+# Git for Windows mounts drives without POSIX permissions (noacl): every folder reads as 755.
+[[ "$WINDOWS" == on ]] || check "state folder is private" "$(mode "$STATE")" 700
 check "log in the platform's folder" "$([[ -f "$LOGS/dictate.log" ]] && echo yes)" yes
 
-# The pre-started Claude (stream-json), with the result file.
+# The pre-started Claude (stream-json), with the result file. Timed: the script's own cost per dictation (the fake
+# Claude answers at once), to compare the platforms (process creation is slow on Windows).
 rf="$STATE/result-test.json"
+started="$(perl -MTime::HiRes=time -e 'printf "%d", time*1000')"
 out="$(printf 'please send the report by friday' | VTT_RESULT_FILE="$rf" bash "$D" refine)"
 check "pre-started Claude" "$? $out" "0 PLEASE SEND THE REPORT BY FRIDAY"
+echo "info  refine with a pre-started fake Claude took $(($(perl -MTime::HiRes=time -e 'printf "%d", time*1000') - started)) ms"
 check "result file: engine" "$(json engine "$rf")" claude
 
 # The one-shot call.
@@ -100,6 +108,20 @@ if [[ "$(uname -s)" == Linux ]]; then
   check "state folder without XDG_RUNTIME_DIR" "$(mode "$fallback")" 700
 fi
 
+# Windows: the pre-started Claude is a native program reading a fifo that bash holds open (claude_prestart). Checked
+# with sort.exe, which, like claude.exe, is not an MSYS program.
+if [[ "$WINDOWS" == on ]]; then
+  fifo="$SANDBOX/fifo-test"
+  mkfifo "$fifo"
+  (exec "$(cygpath -u "$SYSTEMROOT")/System32/sort.exe" <"$fifo" >"$SANDBOX/fifo-out" 2>&1) &
+  reader=$!
+  exec 4>"$fifo"
+  printf 'b\nA\n' >&4
+  exec 4>&-
+  wait "$reader"
+  check "fifo into a native program" "$(tr -d '\r' <"$SANDBOX/fifo-out" | tr '\n' ' ')" "A b "
+fi
+
 # srv_running: our server's pid counts, a reused pid doesn't, and an upgraded (deleted) binary still does.
 eval "$(sed -n '/^srv_file()/p; /^srv_binary()/p; /^srv_running()/,/^}/p' "$D")"
 STATE_DIR="$SANDBOX/servers"
@@ -107,7 +129,11 @@ mkdir -p "$STATE_DIR"
 # A process named whisper-server. Linux reads the real executable from /proc, so it needs a copy: of perl, since the
 # Rust coreutils (Ubuntu 25.10+) are one program that picks its tool by name and wouldn't run as "whisper-server".
 # macOS reports the path that was run, and kills a copied system binary (its signature no longer matches): a symlink.
-if [[ "$(uname -s)" == Linux ]]; then
+# Windows: a copy of sleep.exe; /proc/<pid>/exe ends in .exe.
+if [[ "$WINDOWS" == on ]]; then
+  cp "$(command -v sleep)" "$SANDBOX/whisper-server.exe"
+  "$SANDBOX/whisper-server.exe" 30 &
+elif [[ "$(uname -s)" == Linux ]]; then
   cp "$(command -v perl)" "$SANDBOX/whisper-server"
   "$SANDBOX/whisper-server" -e 'sleep 30' &
 else
@@ -124,9 +150,11 @@ echo "$other" >"$STATE_DIR/whisper-server.pid"
 srv_running whisper-server && r=yes || r=no
 check "server pid check: another process" "$r" no
 echo "$server" >"$STATE_DIR/whisper-server.pid"
-rm "$SANDBOX/whisper-server"
-srv_running whisper-server && r=yes || r=no
-check "server pid check: binary replaced" "$r" yes
+if [[ "$WINDOWS" == off ]]; then # Windows can't delete a running program
+  rm "$SANDBOX/whisper-server"
+  srv_running whisper-server && r=yes || r=no
+  check "server pid check: binary replaced" "$r" yes
+fi
 kill "$server" "$other" 2>/dev/null
 wait 2>/dev/null
 

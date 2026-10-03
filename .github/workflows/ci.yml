@@ -65,3 +65,20 @@ jobs:
           cargo fmt --check
           cargo clippy --all-targets --locked -- -D warnings
           cargo test --locked
+
+  # The Windows app (docs/plans/M8-windows.md): the same dictate.sh contract, run by Git for Windows' bash.
+  windows:
+    runs-on: windows-latest
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Show the Git Bash environment
+        run: |
+          uname -a
+          echo "BASH=$BASH MSYSTEM=${MSYSTEM:-} perl=$(perl -e 'print $^V') curl=$(command -v curl)"
+
+      - name: Test the dictate.sh contract
+        run: scripts/test-dictate.sh

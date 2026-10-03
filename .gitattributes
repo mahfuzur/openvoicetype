@@ -1,0 +1,6 @@
+# Bash and the files it reads must keep LF line endings, also in a Windows checkout (core.autocrlf): a CRLF script fails
+# in Git Bash ("$'\r': command not found"), and a CR would end up in the prompts.
+*.sh text eol=lf
+scripts/testdata/* text eol=lf
+prompts/** text eol=lf
+evals/*.json text eol=lf

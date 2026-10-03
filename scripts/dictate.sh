@@ -7,7 +7,7 @@
 #   stop        stop recording, transcribe, refine, paste
 #   cancel      stop recording and discard it
 #   file        run the pipeline on an existing WAV and print the result (no paste)
-#   selftest    synthesize speech (`say` on macOS, espeak-ng on Linux), run the pipeline, print timings (no paste)
+#   selftest    synthesize speech (`say` on macOS, espeak-ng on Linux, the Windows voice), run the pipeline, print timings
 #   transcribe  print the raw transcript of a WAV (empty if no speech)        [used by the app]
 #   refine      clean up the transcript on stdin and print it; exit 3 = fell back to raw,
 #               exit 4 = the online engine was unavailable and S1-mini cleaned it up,
@@ -25,12 +25,19 @@ umask 077
 # /usr/lib/openvoicetype/bin (last): the Linux package's copies, so the CLI works with just the package installed.
 export PATH="${VTT_BIN_DIR:+$VTT_BIN_DIR:}/opt/homebrew/bin:/usr/local/bin:$HOME/.local/bin:$PATH:/usr/lib/openvoicetype/bin"
 
-# Darwin (macOS) or Linux. The pipeline is the same; only the desktop parts (sounds, notifications, the CLI's paste)
-# and the folder locations differ.
+# Darwin (macOS), Linux, or Windows (Git for Windows' bash: MINGW64_NT-…, UCRT64_NT-…, MSYS_NT-…). The pipeline is the
+# same; only the desktop parts (sounds, notifications, the CLI's paste) and the folder locations differ.
 OS="$(uname -s)"
-# Linux follows the XDG base directories. macOS keeps the fixed paths the app also uses, whatever XDG_* says.
+case "$OS" in MINGW* | MSYS* | UCRT* | CLANG*) OS=Windows ;; esac
+# Linux follows the XDG base directories. macOS keeps the fixed paths the app also uses, whatever XDG_* says. Windows:
+# %APPDATA% for settings, %LOCALAPPDATA% for models and logs (the Windows app uses the same folders).
 if [[ "$OS" == Linux ]]; then
   CONFIG_HOME="${XDG_CONFIG_HOME:-$HOME/.config}" DATA_HOME="${XDG_DATA_HOME:-$HOME/.local/share}"
+elif [[ "$OS" == Windows ]]; then
+  # Arguments to native programs (whisper-server.exe, claude.exe) stay as written: no /x → X:\ rewriting.
+  export MSYS_NO_PATHCONV=1 MSYS2_ARG_CONV_EXCL='*'
+  CONFIG_HOME="$(cygpath -u "${APPDATA:-$HOME/AppData/Roaming}")"
+  DATA_HOME="$(cygpath -u "${LOCALAPPDATA:-$HOME/AppData/Local}")/voice-to-text"
 else
   CONFIG_HOME="$HOME/.config" DATA_HOME="$HOME/.local/share"
 fi
@@ -134,7 +141,11 @@ fi
 # unset and /tmp is shared, so it's XDG_RUNTIME_DIR (private, cleared at logout). The apps use the same folders.
 # Without a usable XDG_RUNTIME_DIR (unset, or another user's after su), one level in /tmp, so the ownership check below
 # covers the folder itself and not a subfolder of a parent another user could have created.
-if [[ "$OS" == Linux ]]; then
+if [[ "$OS" == Windows ]]; then
+  # %TEMP% is in the user's own profile; logs next to the models.
+  STATE_DIR="$(cygpath -u "${TEMP:-${TMPDIR:-/tmp}}")/voice-to-text"
+  LOG_DIR="$DATA_HOME/logs"
+elif [[ "$OS" == Linux ]]; then
   if [[ "${XDG_RUNTIME_DIR:-}" == /* && -d "$XDG_RUNTIME_DIR" && -O "$XDG_RUNTIME_DIR" ]]; then
     STATE_DIR="$XDG_RUNTIME_DIR/voice-to-text"
   else
@@ -151,8 +162,9 @@ LOG_FILE="${VTT_LOG_FILE:-$LOG_DIR/dictate.log}"
 ERR_FILE="$LOG_DIR/error.log"
 
 mkdir -p "$STATE_DIR" "$LOG_DIR"
-# A folder someone else created first (possible under a shared /tmp) could be used to plant files.
-[[ -O "$STATE_DIR" ]] || { echo "dictate.sh: $STATE_DIR belongs to another user" >&2; exit 1; }
+# A folder someone else created first (possible under a shared /tmp) could be used to plant files. Not on Windows: %TEMP%
+# is private to the user, and an administrator's files can belong to the Administrators group.
+[[ "$OS" == Windows || -O "$STATE_DIR" ]] || { echo "dictate.sh: $STATE_DIR belongs to another user" >&2; exit 1; }
 
 # What this run does: cleanup (refine, dictation) or command (Command Mode), and the online engine it uses.
 JOB=cleanup
@@ -211,9 +223,9 @@ file_stamp() { perl -e 'my @s = stat $ARGV[0] or exit 1; print "$s[7]-$s[9]"' "$
 
 log() { printf '%s %s\n' "$(date '+%Y-%m-%d %H:%M:%S')" "$*" >>"$LOG_FILE"; }
 
-# $1 is the macOS system sound; Linux plays the nearest freedesktop sound.
+# $1 is the macOS system sound; Linux plays the nearest freedesktop sound. Windows: none from the CLI (the app plays its own).
 sound() {
-  [[ "$SOUNDS" == on && "$QUIET" != on ]] || return 0
+  [[ "$SOUNDS" == on && "$QUIET" != on && "$OS" != Windows ]] || return 0
   if [[ "$OS" == Darwin ]]; then
     afplay "/System/Library/Sounds/$1.aiff" >/dev/null 2>&1 &
     return 0
@@ -230,7 +242,7 @@ sound() {
 }
 
 notify() {
-  [[ "$QUIET" != on ]] || return 0
+  [[ "$QUIET" != on && "$OS" != Windows ]] || return 0
   if [[ "$OS" == Darwin ]]; then
     osascript -e "display notification \"${1//\"/\\\"}\" with title \"Dictation\"" >/dev/null 2>&1 || true
   else
@@ -254,6 +266,7 @@ start_recording() {
     return 0
   fi
   rm -f "$WAV" "$PID_FILE"
+  [[ "$OS" != Windows ]] || fail "The dictate CLI can't record on Windows: use the OpenVoiceType app"
   command -v rec >/dev/null || fail "sox 'rec' not found (brew install sox, or sudo apt install sox)"
   # Detach fully so the recorder outlives this script (Shortcuts/skhd wait on open stdio).
   nohup rec -q -c 1 -r 16000 -b 16 "$WAV" trim 0 "$MAX_SECONDS" </dev/null >/dev/null 2>>"$ERR_FILE" &
@@ -301,8 +314,8 @@ transcribe() {
       fail "whisper-cli failed (see $ERR_FILE)"
     fi
   fi
-  # Join lines and trim whitespace.
-  out="$(printf '%s' "$out" | tr '\n' ' ' | sed -E 's/[[:space:]]+/ /g; s/^ //; s/ $//')"
+  # Join lines and trim whitespace (a Windows program ends its lines with \r\n).
+  out="$(printf '%s' "$out" | tr '\r\n' '  ' | sed -E 's/[[:space:]]+/ /g; s/^ //; s/ $//')"
   if printf '%s' "$out" | tr '[:upper:]' '[:lower:]' | grep -Eq "$HALLUCINATIONS"; then
     out=""
   fi
@@ -775,12 +788,14 @@ srv_running() {
   if [[ -d "/proc/$pid" ]]; then
     command="$(readlink "/proc/$pid/exe" 2>/dev/null)"
     command="${command% (deleted)}"
-    [[ "$(basename "$command")" == "$(srv_binary "$1")" ]] && return 0
+    command="$(basename "$command")"
+    [[ "${command%.exe}" == "$(srv_binary "$1")" ]] && return 0
     command="$(cat "/proc/$pid/comm" 2>/dev/null)"
   else
     command="$(ps -p "$pid" -o comm= 2>/dev/null)"
   fi
-  [[ "$(basename "$command")" == "$(srv_binary "$1")" ]]
+  command="$(basename "$command")"
+  [[ "${command%.exe}" == "$(srv_binary "$1")" ]]
 }
 
 srv_healthy() { curl -s --max-time 1 "http://127.0.0.1:$(srv_port "$1")/health" 2>/dev/null | grep -q '"ok"'; }
@@ -940,8 +955,10 @@ refine_s1() {
 
 # The CLI's clipboard (the apps do their own pasting). Linux: wl-clipboard on Wayland, xclip on X11. Both leave a child
 # behind that owns the clipboard: its stdout and stderr go to /dev/null, or it would hold a caller's pipe open forever.
+# Windows: Git Bash's /dev/clipboard (UTF-8 in and out).
 clipboard_copy() {
   if [[ "$OS" == Darwin ]]; then pbcopy
+  elif [[ "$OS" == Windows ]]; then cat >/dev/clipboard
   elif [[ -n "${WAYLAND_DISPLAY:-}" ]] && command -v wl-copy >/dev/null; then wl-copy >/dev/null 2>&1
   elif command -v xclip >/dev/null; then xclip -selection clipboard >/dev/null 2>&1
   else return 1
@@ -950,6 +967,7 @@ clipboard_copy() {
 
 clipboard_read() {
   if [[ "$OS" == Darwin ]]; then pbpaste
+  elif [[ "$OS" == Windows ]]; then cat /dev/clipboard
   elif [[ -n "${WAYLAND_DISPLAY:-}" ]] && command -v wl-paste >/dev/null; then wl-paste --no-newline
   elif command -v xclip >/dev/null; then xclip -selection clipboard -o
   else return 1
@@ -961,6 +979,8 @@ clipboard_read() {
 paste_key() {
   if [[ "$OS" == Darwin ]]; then
     osascript -e 'tell application "System Events" to keystroke "v" using command down' >/dev/null 2>>"$ERR_FILE"
+  elif [[ "$OS" == Windows ]]; then
+    return 1 # the CLI copies; the app pastes
   elif [[ -n "${WAYLAND_DISPLAY:-}" ]]; then
     command -v wtype >/dev/null && wtype -M ctrl v -m ctrl 2>>"$ERR_FILE"
   else
@@ -1447,6 +1467,14 @@ selftest() {
   local text="Um, so, like, we need to uh deploy the kubernetes cluster to a w s, and then, you know, update the docker image in git hub."
   if command -v say >/dev/null; then
     say --data-format=LEI16@16000 -o "$wav" "$text"
+  elif [[ "$OS" == Windows ]]; then
+    # The Windows voice (System.Speech), written straight as 16 kHz 16-bit mono. $s and $env: are PowerShell's.
+    # shellcheck disable=SC2016
+    VTT_TTS_WAV="$(cygpath -w "$wav")" VTT_TTS_TEXT="$text" powershell.exe -NoProfile -NonInteractive -Command '
+      Add-Type -AssemblyName System.Speech
+      $s = New-Object System.Speech.Synthesis.SpeechSynthesizer
+      $f = New-Object System.Speech.AudioFormat.SpeechAudioFormatInfo 16000, ([System.Speech.AudioFormat.AudioBitsPerSample]::Sixteen), ([System.Speech.AudioFormat.AudioChannel]::Mono)
+      $s.SetOutputToWaveFile($env:VTT_TTS_WAV, $f); $s.Speak($env:VTT_TTS_TEXT); $s.Dispose()' >/dev/null
   elif command -v espeak-ng >/dev/null && command -v sox >/dev/null; then
     # espeak-ng writes 22 kHz; Whisper needs 16 kHz mono.
     espeak-ng -w "$STATE_DIR/selftest-tts.wav" "$text"
