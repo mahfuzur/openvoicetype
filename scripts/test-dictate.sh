@@ -130,7 +130,7 @@ fi
 # Linux without XDG_RUNTIME_DIR: a private folder one level deep in /tmp (the Rust app's paths::state_dir agrees).
 if [[ "$(uname -s)" == Linux ]]; then
   fallback="/tmp/voice-to-text-$(id -u)"
-  printf 'x' | env -u XDG_RUNTIME_DIR VTT_REFINE=off dictate refine >/dev/null
+  printf 'x' | env -u XDG_RUNTIME_DIR VTT_REFINE=off bash "$D" refine >/dev/null
   check "state folder without XDG_RUNTIME_DIR" "$(mode "$fallback")" 700
 fi
 

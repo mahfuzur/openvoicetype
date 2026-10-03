@@ -6,3 +6,5 @@ prompts/** text eol=lf
 evals/*.json text eol=lf
 *.cmd text eol=crlf
 *.ps1 text eol=crlf
+crates/ovt-pipeline/tests/fake-claude text eol=lf
+crates/ovt-pipeline/golden/* text eol=lf

@@ -65,6 +65,16 @@ jobs:
           cargo clippy --all-targets --locked -- -D warnings
           cargo test --locked
 
+      # The Rust pipeline (crates/ovt-pipeline) must stay equal to dictate.sh: the golden files are regenerated from the
+      # script's own functions and must not change, and the contract test runs against the ovt CLI too.
+      - name: The Rust pipeline matches dictate.sh
+        run: |
+          bash crates/ovt-pipeline/golden/make-text.sh
+          bash crates/ovt-pipeline/golden/make-claude.sh
+          git diff --exit-code crates/ovt-pipeline/golden
+          cargo build --locked -p ovt-pipeline --bin ovt
+          DICTATE=target/debug/ovt scripts/test-dictate.sh
+
   # The Windows app (docs/plans/M8-windows.md): the same dictate.sh contract, run by Git for Windows' bash.
   windows:
     runs-on: windows-latest
@@ -87,3 +97,8 @@ jobs:
           cargo fmt --check
           cargo clippy --all-targets --locked -- -D warnings
           cargo test --locked
+
+      - name: Test the dictate.sh contract against the Rust pipeline (ovt.exe)
+        run: |
+          cargo build --locked -p ovt-pipeline --bin ovt
+          DICTATE=target/debug/ovt.exe scripts/test-dictate.sh

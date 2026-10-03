@@ -6,8 +6,6 @@
 //! app contract (`refine`, `command`, `transcribe`: the same `VTT_*` variables, exit codes and result file), so
 //! `scripts/test-dictate.sh` and `evals/run.py` run against both.
 
-#![allow(unused_variables)] // W0 skeleton: removed when every module is filled in
-
 pub mod claude;
 pub mod config;
 pub mod online;

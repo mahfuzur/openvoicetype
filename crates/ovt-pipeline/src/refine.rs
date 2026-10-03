@@ -388,7 +388,6 @@ mod tests {
         }
 
         #[test]
-        #[ignore = "needs text.rs"]
         fn cleans_up_with_the_prestarted_claude() {
             let config = config("session-ok");
             let report = Session::start(config.clone()).finish("we need to deploy it to the cluster today\n");
@@ -401,7 +400,6 @@ mod tests {
         }
 
         #[test]
-        #[ignore = "needs text.rs"]
         fn offline_without_s1_pastes_whisper_text() {
             let config = Config { force_offline: true, app_name: "Notes".into(), ..config("session-offline") };
             let report = Session::start(config.clone()).finish("we need to deploy it to the cluster today");
@@ -416,7 +414,6 @@ mod tests {
         }
 
         #[test]
-        #[ignore = "needs text.rs"]
         fn too_short_is_skipped() {
             let report = Session::start(config("session-short")).finish("hello there");
             assert_eq!((report.status.as_str(), report.engine.as_str(), report.exit_code()), ("skipped", "none", 0));

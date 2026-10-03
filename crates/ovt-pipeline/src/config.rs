@@ -51,6 +51,8 @@ pub struct Config {
     /// `VTT_OFFLINE=on`: treat the network as down.
     pub force_offline: bool,
 
+    /// `LANGUAGE`: Whisper's language ("en").
+    pub language: String,
     /// `VOCAB` + `VTT_VOCAB`, comma-separated.
     pub vocab: String,
     pub whisper_prompt: bool,
@@ -103,6 +105,7 @@ impl Default for Config {
             online_check: true,
             online_check_host: "api.anthropic.com".into(),
             force_offline: false,
+            language: "en".into(),
             vocab: String::new(),
             whisper_prompt: true,
             whisper_style: WHISPER_STYLE.into(),
@@ -209,6 +212,9 @@ impl Config {
             c.online_check_host = v;
         }
         c.force_offline = var("VTT_OFFLINE").is_some_and(on);
+        if let Some(v) = var("LANGUAGE") {
+            c.language = v;
+        }
         c.vocab = [var("VOCAB"), var("VTT_VOCAB")].into_iter().flatten().collect::<Vec<_>>().join(",");
         if let Some(v) = var("WHISPER_PROMPT") {
             c.whisper_prompt = on(v);

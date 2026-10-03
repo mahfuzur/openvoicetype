@@ -61,15 +61,15 @@ pub struct Transcript {
 }
 
 /// `transcribe_wav`: the warm whisper-server on `port` (the caller starts it), else `whisper_cli` with `model`.
-/// Logged like `cmd_transcribe`. `language` is `LANGUAGE` ("en"; whisper-server gets its own at launch).
+/// Logged like `cmd_transcribe`, in `config.language` (`LANGUAGE`).
 pub fn transcribe(
     config: &Config,
     wav: &std::path::Path,
     port: u16,
     whisper_cli: &std::path::Path,
     model: &std::path::Path,
-    language: &str,
 ) -> std::io::Result<Transcript> {
+    let language = config.language.as_str();
     let nothing = |seconds| Ok(Transcript { text: String::new(), seconds, whisper_ms: 0 });
     if std::fs::metadata(wav).map(|m| m.len() == 0).unwrap_or(true) {
         log(config, "EMPTY no audio file");
@@ -250,11 +250,11 @@ mod tests {
         let dir = config.state_dir.parent().unwrap().to_path_buf();
         let none = Path::new("/nonexistent");
         let short = wav(&dir, "short.wav", 32000, 0, 9600, b"");
-        let t = transcribe(&config, &short, 1, none, none, "en").unwrap();
+        let t = transcribe(&config, &short, 1, none, none).unwrap();
         assert_eq!((t.text.as_str(), t.seconds), ("", 0.3));
-        let t = transcribe(&config, &dir.join("missing.wav"), 1, none, none, "en").unwrap();
+        let t = transcribe(&config, &dir.join("missing.wav"), 1, none, none).unwrap();
         assert_eq!(t.text, "");
-        let error = transcribe(&config, &wav(&dir, "ok.wav", 32000, 0, 32000, b""), 1, none, none, "en");
+        let error = transcribe(&config, &wav(&dir, "ok.wav", 32000, 0, 32000, b""), 1, none, none);
         assert_eq!(error.err().map(|e| e.kind()), Some(io::ErrorKind::NotFound));
         let log = std::fs::read_to_string(&config.log_file).unwrap();
         let lines: Vec<&str> = log.lines().map(|l| &l[20..]).collect();
