@@ -1,0 +1,45 @@
+#!/usr/bin/env bash
+# A stand-in for the claude CLI, for ovt-pipeline's tests (modelled on scripts/testdata/fake-claude): its "cleanup" is
+# the transcript in capitals. It answers --help, the --system-prompt-file probe and `auth status` like the real one.
+# FAKE_MODE: ok, limit (one-shot), stream-limit, garbage (stream: not JSON), die (stream: exits without a word),
+# slow (no answer), assistant (stream: an answer but no result), signed-out. FAKE_LOG gets the arguments and the cwd.
+args="$*"
+[[ -n "${FAKE_LOG:-}" ]] && printf '%s cwd=%s\n' "$args" "$PWD" >>"$FAKE_LOG"
+mode="${FAKE_MODE:-ok}"
+if [[ "$args" == *--help* ]]; then echo "--safe-mode --disable-slash-commands"; exit 0; fi
+if [[ "$args" == *"/nonexistent/vtt-probe"* ]]; then echo "Error: file not found" >&2; exit 1; fi
+if [[ "$args" == "auth status --json" ]]; then
+  if [[ "$mode" == signed-out ]]; then echo '{"loggedIn": false}'; else echo '{"loggedIn": true}'; fi
+  exit 0
+fi
+[[ "$mode" == slow ]] && exec sleep 30
+upper() { perl -0777 -ne '/<transcript>\n(.*)\n<\/transcript>/s; print uc $1'; }
+result() { perl -MJSON::PP -e 'print encode_json({type=>"result", result=>$ARGV[0]}), "\n"' "$1"; }
+if [[ "$args" == *"--input-format stream-json"* ]]; then
+  IFS= read -r line
+  text="$(printf '%s' "$line" | perl -MJSON::PP -ne 'print decode_json($_)->{message}{content}' | upper)"
+  case "$mode" in
+    garbage) echo "Error: unknown option '--verbose'"; exit 1 ;;
+    die) exit 1 ;;
+    stream-limit)
+      echo '{"type":"system","subtype":"init"}'
+      echo '{"type":"rate_limit_event","rate_limit_info":{"status":"rejected","resetsAt":1790000000}}'
+      exec sleep 30
+      ;;
+    assistant)
+      perl -MJSON::PP -e 'print encode_json({type=>"assistant", message=>{content=>[{type=>"text", text=>$ARGV[0]}]}}), "\n"' "$text"
+      exec sleep 30
+      ;;
+  esac
+  echo '{"type":"system","subtype":"init"}'
+  result "$text"
+  # Like the real one, it waits for more input until stdin closes.
+  cat >/dev/null
+  exit 0
+fi
+if [[ "$mode" == limit ]]; then
+  echo '{"type":"rate_limit_event","rate_limit_info":{"status":"rejected","resetsAt":1790000000}}'
+  echo '{"type":"result","is_error":true,"result":"Usage limit reached"}'
+  exit 1
+fi
+result "$(upper)"

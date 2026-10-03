@@ -14,10 +14,13 @@
 use crate::mode::DictationMode;
 use crate::settings::Settings;
 use serde::Deserialize;
-use std::io::{Read, Write};
-use std::os::unix::fs::OpenOptionsExt;
+#[cfg(unix)]
+use std::io::Read;
+use std::io::Write;
 use std::path::{Path, PathBuf};
+#[cfg(unix)]
 use std::process::{Child, Command, Stdio};
+#[cfg(unix)]
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
@@ -162,19 +165,26 @@ pub fn context_env(mode: DictationMode, app_name: &str) -> Vec<(String, String)>
     vec![("VTT_MODE".into(), mode.as_str().into()), ("VTT_APP".into(), app_name.into())]
 }
 
-/// A random hex id for per-run file names.
+/// A random hex id for per-run file names: the standard library's randomly keyed hasher (OS randomness, on every
+/// platform) over the time, the process and a counter.
 pub fn run_id() -> String {
-    let mut bytes = [0u8; 16];
-    if let Ok(mut random) = std::fs::File::open("/dev/urandom") {
-        let _ = random.read_exact(&mut bytes);
-    }
-    bytes.iter().map(|b| format!("{b:02x}")).collect()
+    use std::collections::hash_map::RandomState;
+    use std::hash::BuildHasher;
+    static COUNTER: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+    let count = COUNTER.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+    let now = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap_or_default();
+    let half = |salt: u8| RandomState::new().hash_one((salt, count, now, std::process::id()));
+    format!("{:016x}{:016x}", half(0), half(1))
 }
 
 /// Writes a file only this user can read (0600), failing if it exists.
 pub fn private_file(path: &Path, contents: &[u8]) -> std::io::Result<()> {
-    let mut file = std::fs::OpenOptions::new().write(true).create_new(true).mode(0o600).open(path)?;
-    file.write_all(contents)
+    let mut options = std::fs::OpenOptions::new();
+    options.write(true).create_new(true);
+    #[cfg(unix)]
+    std::os::unix::fs::OpenOptionsExt::mode(&mut options, 0o600);
+    // Windows: the folder (%TEMP%) is the user's own, and files inherit its permissions.
+    options.open(path)?.write_all(contents)
 }
 
 /// Key and result files a crash left behind (each normally lives for one run).
@@ -189,6 +199,7 @@ pub fn remove_leftovers(state_dir: &Path) {
     }
 }
 
+#[cfg(unix)]
 pub struct ScriptOutput {
     /// None: stopped by a signal (the watchdog) or couldn't run.
     pub status: Option<i32>,
@@ -198,6 +209,7 @@ pub struct ScriptOutput {
 }
 
 /// One `dictate.sh` process whose stdin is written later, so it can start work (Claude) before its input exists.
+#[cfg(unix)]
 pub struct ScriptRun {
     child: Child,
     /// Deleted when the process exits (the result file, a key file, the command file).
@@ -210,6 +222,7 @@ pub struct ScriptRun {
     reaped: bool,
 }
 
+#[cfg(unix)]
 impl Drop for ScriptRun {
     /// A run dropped without `finish` (a replaced pre-start, an early return): closing stdin ends the script, and a
     /// thread reaps it and then removes its files, so it leaves no zombie (Rust's `Child` doesn't reap on drop).
@@ -228,6 +241,7 @@ impl Drop for ScriptRun {
     }
 }
 
+#[cfg(unix)]
 pub struct LaunchOptions<'a> {
     pub script: &'a Path,
     pub args: &'a [&'a str],
@@ -239,6 +253,7 @@ pub struct LaunchOptions<'a> {
     pub api_key: Option<&'a str>,
 }
 
+#[cfg(unix)]
 impl ScriptRun {
     pub fn launch(options: LaunchOptions) -> std::io::Result<ScriptRun> {
         let mut env = options.env;
@@ -355,6 +370,7 @@ impl ScriptRun {
 }
 
 /// Blocks until the process exits, leaving it a zombie (reaped later by `Child::wait`).
+#[cfg(unix)]
 fn wait_without_reaping(pid: libc::pid_t) {
     loop {
         // SAFETY: waitid with WNOWAIT only observes; `info` is plain data.
@@ -439,18 +455,21 @@ mod tests {
         assert!(!env.contains_key("VTT_WHISPER_MODEL"));
     }
 
+    #[cfg(unix)]
     fn fake_script(dir: &Path, body: &str) -> PathBuf {
         let script = dir.join("fake-dictate.sh");
         std::fs::write(&script, body).unwrap();
         script
     }
 
+    #[cfg(unix)]
     fn temp_dir(name: &str) -> PathBuf {
         let dir = std::env::temp_dir().join(format!("ovt-{name}-{}", std::process::id()));
         std::fs::create_dir_all(&dir).unwrap();
         dir
     }
 
+    #[cfg(unix)]
     #[test]
     fn runs_the_contract() {
         // A stand-in for dictate.sh refine: reads stdin, writes the result file, reads and deletes the key file.
@@ -478,6 +497,7 @@ printf 'CLEANED %s %s' "$input" "$key"; exit 4"#,
         std::fs::remove_dir_all(dir).unwrap();
     }
 
+    #[cfg(unix)]
     #[test]
     fn dropped_run_is_reaped() {
         let dir = temp_dir("dropped");
@@ -503,6 +523,7 @@ printf 'CLEANED %s %s' "$input" "$key"; exit 4"#,
         std::fs::remove_dir_all(dir).unwrap();
     }
 
+    #[cfg(unix)]
     #[test]
     fn watchdog_sends_sigterm() {
         // The script's EXIT trap must run (that's what ends a pre-started Claude), so the watchdog can't use SIGKILL.
@@ -530,6 +551,7 @@ printf 'CLEANED %s %s' "$input" "$key"; exit 4"#,
         std::fs::remove_dir_all(dir).unwrap();
     }
 
+    #[cfg(unix)]
     #[test]
     fn empty_input_ends_a_prestart() {
         let dir = temp_dir("prestart");

@@ -2,7 +2,7 @@
 
 *Called Voice to Text up to v0.1.1 (renamed in M5).*
 
-**Goal:** a free, open-source dictation app for macOS (and Linux, from M7). Press a hotkey, speak, and well-formatted text appears in
+**Goal:** a free, open-source dictation app for macOS (and Linux, from M7, and Windows, from M8). Press a hotkey, speak, and well-formatted text appears in
 the focused app. Whisper runs locally, and cleanup is done by **the AI subscription the user already pays for**,
 through its CLI, with no API keys. Local models and API keys are options too.
 
@@ -52,7 +52,8 @@ post-processing, rich paste, and the eval harness (`evals/`). Eval: 30% → **10
 | M5.4 | Trust release | 7–9 days | ✅ Released as v0.4.0 (2026-09-25) ([plan](plans/M5.4-trust-release.md)) | From an outside review: private logs, safe pasting, a guard for changed numbers and "not", an isolated Claude call with clear errors, and an OpenAI-compatible provider so cleanup doesn't depend on Claude alone |
 | M5.5 | Command Mode, on-screen context and snippets | 11–14 days | ◐ Command Mode released as v0.5.0 (2026-09-25); context and snippets next, in v0.6.0 ([plan](plans/M5.5-command-mode-context-snippets.md), [research](research/2026-09-25-command-mode-and-cli.md)) | Closes the biggest gap: editing the selection by voice. v0.5.0 = Command Mode; v0.6.0 = context, snippets and Apple's on-device speech engine (macOS 26) |
 | M6 | More providers | 3–4 days | Not started | Turns it into a platform: pick Codex, Gemini, Ollama or an API as well as Claude and S1-mini |
-| M7 | Linux app | 35–50 days | ◐ P0 started (2026-09-30) ([plan](plans/M7-linux.md)) | Requested in [#14](https://github.com/mahfuzur/openvoicetype/issues/14): a native Rust + GTK4 app with full parity, sharing `dictate.sh`, the prompts and the evals |
+| M7 | Linux app | 35–50 days | ◐ P0 done, P1 spike 1 merged (2026-10-03) ([plan](plans/M7-linux.md)) | Requested in [#14](https://github.com/mahfuzur/openvoicetype/issues/14): a native Rust + GTK4 app with full parity, sharing `dictate.sh`, the prompts and the evals |
+| M8 | Windows app | 25–35 days after W0 | ◐ W0 started (2026-10-03) ([plan](plans/M8-windows.md)) | A native Rust app for Windows 11 with full parity. The cleanup pipeline is in Rust (`dictate.sh` costs ~2 s per dictation under Git Bash), held equal to the script by golden tests and the shared evals |
 
 M3 matters most for adoption: people don't keep using a slow dictation tool.
 
@@ -324,6 +325,20 @@ Installed CLIs are detected automatically by resolving the user's login-shell `P
 - **Packages:** .deb and .rpm, released together with the DMG. No Flatpak or AppImage: they can't run the host `claude` CLI
   or install the extension.
 - **Full parity before the first release:** one release, with internal checkpoints (P0–P7).
+
+## M8: Windows app
+
+> **Detailed plan and task tracking:** [plans/M8-windows.md](plans/M8-windows.md).
+
+- **The pipeline in Rust:** `crates/ovt-pipeline` does what `dictate.sh` does after Whisper (prompts, Claude, the
+  OpenAI-compatible endpoint, S1-mini, the meaning guard, post-processing), because the script costs ~2 s per dictation
+  under Git Bash and a native `claude.exe` can't read its fifo. Golden tests generated from the script, the shared
+  contract test and the evals keep the two equal. No Git or WSL needed.
+- **Native:** Rust and Win32 (windows-rs): a tray icon, global hotkeys with release (hold to talk), WASAPI recording,
+  SendInput paste with clipboard restore, UI Automation for password fields and the selection, a layered overlay.
+- **Shared logic:** `crates/ovt-core` (ported from Swift, also used by Linux).
+- **Packaging:** a per-user installer, Vulkan and CPU builds of whisper.cpp and llama.cpp; signing through SignPath
+  Foundation (Smart App Control blocks unsigned apps).
 
 ## Decisions
 

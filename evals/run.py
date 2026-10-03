@@ -19,6 +19,8 @@ file and the spoken instruction on stdin), with the engine from --cleanup (claud
 no isolation flags. Compare its median with a normal run (which is also cold, but isolated).
 --e2e runs like the app: `refine` is started before the speech is synthesized (its Claude starts meanwhile), then the
 transcript from whisper-server is fed to it. --timing prints the median time of each stage after "recording stops".
+--bin PATH runs another implementation of dictate.sh's contract instead: the Rust pipeline's `ovt` (crates/ovt-pipeline),
+as the Windows app uses it. Both must pass the same cases.
 """
 import argparse
 import concurrent.futures as futures
@@ -44,9 +46,19 @@ LIST_LINE = re.compile(r"^\s*(?:[-*•]|\d+[.)])\s+\S", re.MULTILINE)
 SENTENCE_END = re.compile(r"[.!?](?=\s|$)")
 
 
+# The implementation under test: dictate.sh, or the program given with --bin.
+PROGRAM = None
+
+
+def program():
+    if PROGRAM:
+        return [PROGRAM]
+    return ["/bin/bash" if Path("/bin/bash").exists() else "bash", str(SCRIPT)]
+
+
 def run_script(args, text=None, env=None, timeout=90):
     result = subprocess.run(
-        ["/bin/bash", str(SCRIPT), *args],
+        [*program(), *args],
         input=text, capture_output=True, text=True, env=env, timeout=timeout,
     )
     return result.returncode, result.stdout.strip()
@@ -70,14 +82,26 @@ def case_env(case, args, log_file):
         # Evaluate the repo's prompts, not a personal override or dictionary.
         "PROMPT_FILE": "/nonexistent",
         "DICTIONARY_FILE": "/nonexistent",
+        "VTT_PROMPTS_DIR": str(ROOT / "prompts"),
     })
     return env
 
 
 def synthesize(text, directory):
-    """Speech for --e2e: macOS `say`, or espeak-ng on Linux (a robotic voice: timings compare, word accuracy less so)."""
+    """Speech for --e2e: macOS `say`, the Windows voice, or espeak-ng on Linux (a robotic voice: timings compare, word
+    accuracy less so)."""
     speech = Path(directory) / "speech.aiff"
     wav = Path(directory) / "speech.wav"
+    if sys.platform == "win32":
+        # System.Speech writes Whisper's format directly (no sox on Windows).
+        script = ("Add-Type -AssemblyName System.Speech; $s = New-Object System.Speech.Synthesis.SpeechSynthesizer; "
+                  "$f = New-Object System.Speech.AudioFormat.SpeechAudioFormatInfo 16000, "
+                  "([System.Speech.AudioFormat.AudioBitsPerSample]::Sixteen), "
+                  "([System.Speech.AudioFormat.AudioChannel]::Mono); "
+                  "$s.SetOutputToWaveFile($env:VTT_TTS_WAV, $f); $s.Speak($env:VTT_TTS_TEXT); $s.Dispose()")
+        subprocess.run(["powershell.exe", "-NoProfile", "-NonInteractive", "-Command", script], check=True,
+                       env=dict(os.environ, VTT_TTS_WAV=str(wav), VTT_TTS_TEXT=text))
+        return wav
     if shutil.which("say"):
         subprocess.run(["say", "-o", str(speech), text], check=True)
     else:
@@ -181,7 +205,7 @@ def run_case(case, args, log_file):
         if "say" not in case:
             return {"id": case["id"], "skipped": True}
         # Like the app: start `refine` when "recording" starts; synthesizing the speech stands in for the recording.
-        refine = subprocess.Popen(["/bin/bash", str(SCRIPT), "refine"], stdin=subprocess.PIPE, stdout=subprocess.PIPE,
+        refine = subprocess.Popen([*program(), "refine"], stdin=subprocess.PIPE, stdout=subprocess.PIPE,
                                   stderr=subprocess.DEVNULL, text=True, env=env)
         with tempfile.TemporaryDirectory() as directory:
             wav = synthesize(case["say"], directory)
@@ -210,6 +234,7 @@ def run_case(case, args, log_file):
 def main():
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     parser.add_argument("--model", default="haiku", help="Claude model (with --cleanup claude)")
+    parser.add_argument("--bin", help="run this program instead of dictate.sh (the Rust pipeline's ovt)")
     parser.add_argument("--cleanup", default="claude", choices=["claude", "s1", "openai"])
     parser.add_argument("--case", action="append", help="run only these case ids")
     parser.add_argument("--e2e", action="store_true", help="synthesize speech and run Whisper too")
@@ -220,6 +245,9 @@ def main():
     parser.add_argument("--command", action="store_true", help="evaluate Command Mode (evals/command_cases.json)")
     parser.add_argument("--cold", action="store_true", help="time a plain one-shot claude -p per case, for comparison")
     args = parser.parse_args()
+    global PROGRAM
+    if args.bin:
+        PROGRAM = str(Path(args.bin).resolve())
     if args.command and args.cleanup == "s1":
         sys.exit("Command Mode needs an engine that follows instructions: --cleanup claude or openai")
 

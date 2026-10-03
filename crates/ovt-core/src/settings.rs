@@ -171,16 +171,18 @@ impl Settings {
         serde_json::from_value(merged).ok()
     }
 
-    /// Writes atomically, readable by the user only.
+    /// Writes atomically, readable by the user only (Windows: %APPDATA% is the user's own).
     pub fn save(&self, path: &Path) -> std::io::Result<()> {
         use std::io::Write;
-        use std::os::unix::fs::OpenOptionsExt;
         if let Some(dir) = path.parent() {
             std::fs::create_dir_all(dir)?;
         }
         let temporary = path.with_extension("json.tmp");
-        let mut file =
-            std::fs::OpenOptions::new().write(true).create(true).truncate(true).mode(0o600).open(&temporary)?;
+        let mut options = std::fs::OpenOptions::new();
+        options.write(true).create(true).truncate(true);
+        #[cfg(unix)]
+        std::os::unix::fs::OpenOptionsExt::mode(&mut options, 0o600);
+        let mut file = options.open(&temporary)?;
         file.write_all(serde_json::to_string_pretty(self)?.as_bytes())?;
         file.sync_all()?;
         std::fs::rename(temporary, path)
@@ -238,6 +240,7 @@ mod tests {
         assert!(Settings::from_json("[1]").is_none() && Settings::from_json("{broken").is_none());
     }
 
+    #[cfg(unix)]
     #[test]
     fn saves_privately() {
         use std::os::unix::fs::PermissionsExt;

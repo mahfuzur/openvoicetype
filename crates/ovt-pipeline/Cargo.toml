@@ -1,0 +1,19 @@
+[package]
+name = "ovt-pipeline"
+description = "OpenVoiceType's dictation pipeline in Rust (Whisper, the cleanup engines, the meaning guard, post-processing): the same as scripts/dictate.sh, for the Windows app"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+
+[dependencies]
+ovt-core = { path = "../ovt-core" }
+chrono = { version = "0.4", default-features = false, features = ["clock", "std"] }
+fancy-regex = "0.14"
+serde.workspace = true
+serde_json.workspace = true
+ureq = { version = "3", default-features = false, features = ["rustls"] }
+
+[[bin]]
+name = "ovt"
+path = "src/bin/ovt.rs"

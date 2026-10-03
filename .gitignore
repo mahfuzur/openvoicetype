@@ -9,4 +9,4 @@ evals/results/
 __pycache__/
 *.pyc
 dist/
-linux/target/
+/target/

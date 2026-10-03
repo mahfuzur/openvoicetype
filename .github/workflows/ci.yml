@@ -60,8 +60,60 @@ jobs:
         run: scripts/test-dictate.sh
 
       - name: Check and test the Rust crates
-        working-directory: linux
         run: |
           cargo fmt --check
           cargo clippy --all-targets --locked -- -D warnings
           cargo test --locked
+
+      # The Rust pipeline (crates/ovt-pipeline) must stay equal to dictate.sh: the golden files are regenerated from the
+      # script's own functions and must not change, and the contract test runs against the ovt CLI too.
+      - name: The Rust pipeline matches dictate.sh
+        run: |
+          bash crates/ovt-pipeline/golden/make-text.sh
+          bash crates/ovt-pipeline/golden/make-claude.sh
+          git diff --exit-code crates/ovt-pipeline/golden
+          cargo build --locked -p ovt-pipeline --bin ovt
+          DICTATE=target/debug/ovt scripts/test-dictate.sh
+
+  # The Windows app (docs/plans/M8-windows.md): the same dictate.sh contract, run by Git for Windows' bash.
+  windows:
+    runs-on: windows-latest
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Show the Git Bash environment
+        run: |
+          uname -a
+          echo "BASH=$BASH MSYSTEM=${MSYSTEM:-} perl=$(perl -e 'print $^V') curl=$(command -v curl)"
+
+      - name: Test the dictate.sh contract
+        run: scripts/test-dictate.sh
+
+      - name: Check and test the Rust crates
+        run: |
+          cargo fmt --check
+          cargo clippy --all-targets --locked -- -D warnings
+          cargo test --locked
+
+      - name: Test the dictate.sh contract against the Rust pipeline (ovt.exe)
+        run: |
+          cargo build --locked -p ovt-pipeline --bin ovt
+          DICTATE=target/debug/ovt.exe scripts/test-dictate.sh
+
+      # The app and ovt.exe for a test on a real PC (windows/pc-test/run.ps1 downloads the helpers and the model).
+      - name: Build the Windows app
+        run: |
+          cargo build --release --locked -p openvoicetype-windows -p ovt-pipeline
+          out=dist/OpenVoiceType-windows
+          mkdir -p "$out"
+          cp target/release/OpenVoiceType.exe target/release/ovt.exe "$out/"
+          cp -r prompts windows/pc-test "$out/"
+          mkdir -p "$out/evals" && cp evals/run.py evals/cases.json evals/command_cases.json "$out/evals/"
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: OpenVoiceType-windows
+          path: dist/OpenVoiceType-windows
