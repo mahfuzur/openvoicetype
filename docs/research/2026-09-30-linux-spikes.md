@@ -14,7 +14,8 @@ real desktop.
 
 | Need | Result |
 |---|---|
-| Hotkey press **and release** (hold to talk) | ✅ with `Meta.KeyBindingFlags.TRIGGER_RELEASE` (128): `accelerator-activated` on press, `accelerator-deactivated` on release (0.41 s for a 0.4 s hold). Without that flag, or with `IGNORE_AUTOREPEAT`, there is no release signal. |
+| Hotkey press **and release** (hold to talk) | ✅ with `TRIGGER_RELEASE \| IGNORE_AUTOREPEAT` (144): one `accelerator-activated` on press and one `accelerator-deactivated` on release (1.52 s for a 1.5 s hold). `TRIGGER_RELEASE` (128) alone repeats Activated every ~30 ms once the key is held past the 500 ms repeat delay (found 2026-10-03; the first probe held only 0.4 s). `IGNORE_AUTOREPEAT` alone gives no release. |
+| Grabs left behind | ✅ each grab belongs to the caller's D-Bus connection, and is released when that caller disconnects (a crash, Ctrl+C), else Esc would stay grabbed desktop-wide until logout. |
 | Esc only while recording | ✅ grab and ungrab work |
 | Focused window | ✅ pid, app id (`org.gnome.TextEditor.desktop`), a stable window id (`Meta.Window.get_id()`), title, WM class |
 | Clipboard write and read | ✅ through `St.Clipboard` (`text/plain;charset=utf-8`), Unicode kept |
@@ -25,8 +26,12 @@ real desktop.
 | Overlay | ✅ shows through `Main.layoutManager.addTopChrome`. GNOME 50 removed the `affectsInputRegion` option; a non-reactive actor lets clicks through. |
 | Panel icon | ✅ `PanelMenu.Button` |
 
-Also found: a window opened without a user action doesn't get focus in GNOME 50 (focus-stealing prevention), which only
-matters for tests.
+Also found:
+- A window opened without a user action doesn't get focus in GNOME 50 (focus-stealing prevention), which only matters for tests.
+- An extension without `session-modes` is disabled while the screen is locked and enabled again on unlock: its grabs go
+  and its D-Bus name drops and comes back. The app must watch the name and grab again (P2).
+- Key symbols are looked up in the current layout group only (to check on the PC with a non-Latin layout active: Ctrl+V
+  might do nothing).
 
 **On the real PC:** to do (`spike.py`: a real key hold, Ctrl+Shift+V in Ptyxis, Firefox's password field, PRIMARY, whether
 the overlay is visible and keeps focus, the panel icon, and behaviour after logging out and in).

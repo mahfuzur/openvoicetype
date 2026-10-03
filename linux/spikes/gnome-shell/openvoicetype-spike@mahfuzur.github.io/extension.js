@@ -65,7 +65,9 @@ const KEY_NAMES = {
 class Service {
     constructor(extension) {
         this._extension = extension;
-        this._grabs = new Map(); // action -> binding name
+        this._grabs = new Map(); // action -> {name, owner}: the binding name and the caller's unique bus name
+        this._watches = new Map(); // owner -> bus watch id: a caller that disconnects (Ctrl+C, a crash) loses its grabs
+        this._holds = new Set(); // SendKeys(...@ms) still holding keys down: {id, release}
         this._displaySignals = [];
         this._displaySignals.push(global.display.connect('accelerator-activated', (display, action) => {
             if (this._grabs.has(action))
@@ -111,28 +113,49 @@ class Service {
     }
 
     // TRIGGER_RELEASE: GNOME 50 then signals Activated on press and Deactivated on release (hold to talk). Without it,
-    // there's no Deactivated (tried in the container, 2026-09-30).
-    GrabAccelerator(accelerator) {
-        return this.GrabAcceleratorWithFlags(accelerator, Meta.KeyBindingFlags.TRIGGER_RELEASE);
+    // there's no Deactivated (tried in the container, 2026-09-30). IGNORE_AUTOREPEAT: a key held past the repeat delay
+    // (500 ms) would otherwise send Activated again every ~30 ms until it's released.
+    GrabAcceleratorAsync([accelerator], invocation) {
+        const flags = Meta.KeyBindingFlags.TRIGGER_RELEASE | Meta.KeyBindingFlags.IGNORE_AUTOREPEAT;
+        invocation.return_value(new GLib.Variant('(u)', [this._grab(accelerator, flags, invocation.get_sender())]));
     }
 
     // Meta.KeyBindingFlags, to find which grab reports key release.
-    GrabAcceleratorWithFlags(accelerator, flags) {
+    GrabAcceleratorWithFlagsAsync([accelerator, flags], invocation) {
+        invocation.return_value(new GLib.Variant('(u)', [this._grab(accelerator, flags, invocation.get_sender())]));
+    }
+
+    _grab(accelerator, flags, owner) {
         const action = global.display.grab_accelerator(accelerator, flags);
         if (action === Meta.KeyBindingAction.NONE)
             return 0;
         const name = Meta.external_binding_name_for_action(action);
         Main.wm.allowKeybinding(name, Shell.ActionMode.ALL);
-        this._grabs.set(action, name);
+        this._grabs.set(action, {name, owner});
+        if (owner && !this._watches.has(owner)) {
+            this._watches.set(owner, Gio.bus_watch_name_on_connection(Gio.DBus.session, owner,
+                Gio.BusNameWatcherFlags.NONE, null, () => this._releaseOwner(owner)));
+        }
         return action;
     }
 
+    _releaseOwner(owner) {
+        for (const [action, grab] of [...this._grabs]) {
+            if (grab.owner === owner)
+                this.UngrabAccelerator(action);
+        }
+        const watch = this._watches.get(owner);
+        if (watch !== undefined)
+            Gio.bus_unwatch_name(watch);
+        this._watches.delete(owner);
+    }
+
     UngrabAccelerator(action) {
-        const name = this._grabs.get(action);
-        if (name === undefined)
+        const grab = this._grabs.get(action);
+        if (grab === undefined)
             return false;
         this._grabs.delete(action);
-        Main.wm.allowKeybinding(name, Shell.ActionMode.NONE);
+        Main.wm.allowKeybinding(grab.name, Shell.ActionMode.NONE);
         return global.display.ungrab_accelerator(action);
     }
 
@@ -152,15 +175,23 @@ class Service {
             .create_virtual_device(Clutter.InputDeviceType.KEYBOARD_DEVICE);
         for (const keyval of keyvals)
             this._keyboard.notify_keyval(GLib.get_monotonic_time(), keyval, Clutter.KeyState.PRESSED);
+        const keyboard = this._keyboard;
         const release = () => {
             for (const keyval of [...keyvals].reverse())
-                this._keyboard?.notify_keyval(GLib.get_monotonic_time(), keyval, Clutter.KeyState.RELEASED);
-            return GLib.SOURCE_REMOVE;
+                keyboard.notify_keyval(GLib.get_monotonic_time(), keyval, Clutter.KeyState.RELEASED);
         };
-        if (hold)
-            GLib.timeout_add(GLib.PRIORITY_DEFAULT, Number(hold), release);
-        else
+        if (hold) {
+            // Kept so destroy() can release the keys at once instead of leaving them down.
+            const pending = {release};
+            pending.id = GLib.timeout_add(GLib.PRIORITY_DEFAULT, Number(hold), () => {
+                this._holds.delete(pending);
+                release();
+                return GLib.SOURCE_REMOVE;
+            });
+            this._holds.add(pending);
+        } else {
             release();
+        }
         return true;
     }
 
@@ -231,8 +262,15 @@ class Service {
     }
 
     destroy() {
+        for (const hold of this._holds) {
+            GLib.Source.remove(hold.id);
+            hold.release();
+        }
+        this._holds.clear();
         for (const action of [...this._grabs.keys()])
             this.UngrabAccelerator(action);
+        this._watches.forEach(watch => Gio.bus_unwatch_name(watch));
+        this._watches.clear();
         this._displaySignals.forEach(id => global.display.disconnect(id));
         this._overlay?.destroy();
         this._overlay = null;

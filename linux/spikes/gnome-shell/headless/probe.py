@@ -57,18 +57,34 @@ for _ in range(40):
         break
 report("focus", bool(focus.get("pid")) and bool(focus.get("window")), focus or str(call("ListWindows")) + open("/tmp/editor.log").read()[-600:] + " sockets=" + str(os.listdir(os.environ["XDG_RUNTIME_DIR"])))
 
-for label, flags in [("none", 0), ("trigger-release", 128), ("ignore-autorepeat", 16)]:
+# Held for 1.5 s, longer than the 500 ms key-repeat delay: only TRIGGER_RELEASE|IGNORE_AUTOREPEAT gives one press and
+# one release (TRIGGER_RELEASE alone repeats Activated every ~30 ms while the key is held).
+for label, flags in [("none", 0), ("trigger-release", 128), ("ignore-autorepeat", 16), ("both", 144)]:
     action = call("GrabAcceleratorWithFlags", "(su)", "<Control><Alt>space", flags)[0]
     signals.clear()
-    call("SendKeys", "(s)", "ctrl+alt+space@400")
-    pump(1.0)
+    call("SendKeys", "(s)", "ctrl+alt+space@1500")
+    pump(2.0)
     names = [(s[1], round(s[0] - signals[0][0], 2)) for s in signals] if signals else []
-    released = [n for n, _ in names][:2] == ["Activated", "Deactivated"]
-    if label == "trigger-release":
-        report("hotkey press and release (TRIGGER_RELEASE)", released, names)
+    if label == "both":
+        report("hotkey press and release, no repeats", [n for n, _ in names] == ["Activated", "Deactivated"], names)
     else:
-        print(f"info grab flags={label}: {names} (no release expected)")
+        print(f"info grab flags={label}: {len(names)} signals, first {names[:3]}")
     call("UngrabAccelerator", "(u)", action)
+action = call("GrabAccelerator", "(s)", "<Control><Alt>space")[0]
+signals.clear(); call("SendKeys", "(s)", "ctrl+alt+space@1500"); pump(2.0)
+report("GrabAccelerator's default flags", [s[1] for s in signals] == ["Activated", "Deactivated"], [s[1] for s in signals])
+call("UngrabAccelerator", "(u)", action)
+# A caller that disconnects loses its grabs: a second connection grabs, then closes.
+other = Gio.DBusConnection.new_for_address_sync(Gio.dbus_address_get_for_bus_sync(Gio.BusType.SESSION, None),
+    Gio.DBusConnectionFlags.AUTHENTICATION_CLIENT | Gio.DBusConnectionFlags.MESSAGE_BUS_CONNECTION, None, None)
+other.call_sync("io.github.mahfuzur.OpenVoiceType.Shell", "/io/github/mahfuzur/OpenVoiceType/Shell",
+                "io.github.mahfuzur.OpenVoiceType.Shell", "GrabAccelerator", GLib.Variant("(s)", ("<Super>F9",)),
+                None, 0, 5000, None)
+other.close_sync(None)
+pump(0.5)
+action = call("GrabAccelerator", "(s)", "<Super>F9")[0]
+report("grab released when its caller disconnects", action > 0, action)
+call("UngrabAccelerator", "(u)", action)
 action = call("GrabAccelerator", "(s)", "Escape")[0]
 signals.clear(); call("SendKeys", "(s)", "esc"); pump(0.5)
 report("escape grab", [s[1] for s in signals][:1] == ["Activated"], [s[1] for s in signals])

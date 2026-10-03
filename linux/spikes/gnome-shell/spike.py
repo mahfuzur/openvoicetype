@@ -123,26 +123,34 @@ pump(1.0)
 released = call("GetModifiers")[0]
 result("modifiers after release", released == 0, hex(released))
 
-# 3. Hold to talk.
+# 3. Hold to talk. (The extension also releases a grab if this script stops early, e.g. with Ctrl+C.)
 action = call("GrabAccelerator", "(s)", "<Control><Alt>space")[0]
 result("hotkey grabbed", action > 0, action)
 signals.clear()
-countdown("Step 3: press Ctrl+Alt+Space and HOLD it for about 2 seconds, then let go. Then tap it once quickly."
-          " You have", 8)
+try:
+    countdown("Step 3: press Ctrl+Alt+Space and HOLD it for about 2 seconds, then let go. Then tap it once quickly."
+              " You have", 8)
+finally:
+    call("UngrabAccelerator", "(u)", action)
 events = [(name, round(t - signals[0][0], 2)) for t, name, _ in signals] if signals else []
 names = [name for name, _ in events]
+# Press-release pairs: a held key must give one Activated, not one per key repeat.
+pairs = [(names[i], names[i + 1]) for i in range(0, len(names) - 1, 2)]
 result("hotkey press and release (hold to talk)", names[:2] == ["Activated", "Deactivated"], events)
-held_for = events[1][1] if len(events) > 1 else 0
-result("hold time measured", held_for > 1.0, f"{held_for} s")
-result("quick tap also reported", names.count("Activated") >= 2, names)
-call("UngrabAccelerator", "(u)", action)
+result("no repeats while held", all(pair == ("Activated", "Deactivated") for pair in pairs) and len(names) % 2 == 0,
+       names)
+first_release = next((t for name, t in events if name == "Deactivated"), 0)
+result("hold time measured", first_release > 1.0, f"{first_release} s")
+result("quick tap also reported", len(pairs) >= 2, names)
 
 # 4. Esc only while recording.
 action = call("GrabAccelerator", "(s)", "Escape")[0]
 signals.clear()
-countdown("Step 4: press Esc once", 4)
+try:
+    countdown("Step 4: press Esc once", 4)
+finally:
+    call("UngrabAccelerator", "(u)", action)
 result("Esc grabbed", "Activated" in [s[1] for s in signals], [s[1] for s in signals])
-call("UngrabAccelerator", "(u)", action)
 result("Esc released back to apps", ask("Press Esc in the Text Editor search box (Ctrl+F, then Esc). Does Esc close it"
                                         " normally again?"))
 
@@ -156,9 +164,7 @@ pump(0.1)
 wait_for_modifiers_released()
 call("SendKeys", "(s)", "ctrl+v")
 pump(0.5)
-set_clipboard(before)
-pump(0.3)
-result("clipboard restored after the paste", get_clipboard() == before, repr(get_clipboard()))
+set_clipboard(before)  # only a fixed delay on GNOME (no "was read" signal): step 5's question checks the paste got in
 result("paste in Text Editor", ask("Did 'Hello from OpenVoiceType 👋 (pasted by the spike)' appear in the Text Editor?"))
 
 # 6. Paste into a terminal with Ctrl+Shift+V.
