@@ -57,6 +57,24 @@ hotkey -> pin the paste target (app, window, title; refuse password fields) and 
   by its name, so a copy renamed (as tests do to fake a server) doesn't run. Test on `ubuntu:25.10` as well as 24.04.
 - Rust builds and tests run in Docker (`rust:1-bookworm`); Homebrew's cargo on the maintainer's Mac is broken (libgit2/llhttp).
 
+## Windows (M8, in progress, see docs/plans/M8-windows.md)
+
+- A native Rust app in `windows/crates/openvoicetype` (Win32 through windows-rs). It does **not** run `dictate.sh`: under
+  Git Bash a `refine` costs ~2.2 s of script time (209 ms on Linux; ~100 process starts at 15–60 ms each), and a native
+  `claude.exe` can't read an MSYS fifo ("The handle is invalid"). Measured on `windows-latest`, 2026-10-03.
+- **`crates/ovt-pipeline`** is the cleanup half of `dictate.sh` in Rust, and the script is its specification: same prompts,
+  flags, failure classes, statuses, exit codes and result file. **A change to the pipeline in `dictate.sh` must be made in
+  `ovt-pipeline` too** (and the reverse). Guards:
+  - golden tests: `crates/ovt-pipeline/golden/make-*.sh` run the script's own functions over inputs and write the expected
+    outputs; CI regenerates them and fails on a difference;
+  - `DICTATE=target/debug/ovt scripts/test-dictate.sh`: the same contract test against the `ovt` CLI;
+  - `evals/run.py --bin <ovt>`: the same evals.
+- `dictate.sh` still runs in Git Bash for the CLI (`OS=Windows`: `%APPDATA%`/`%LOCALAPPDATA%`/`%TEMP%` folders, no pre-start).
+- Windows folders: settings `%APPDATA%\voice-to-text`, models and logs `%LOCALAPPDATA%\voice-to-text\{whisper,s1-mini,logs}`,
+  state `%TEMP%\voice-to-text` (`ovt_core::paths`).
+- Rust: one workspace at the repo root (`crates/` shared, `linux/crates/`, `windows/crates/`). Check Windows code from
+  the Mac with `cargo clippy --target x86_64-pc-windows-gnu` in Docker; CI runs the real tests on `windows-latest`.
+
 ## Calling Claude for cleanup
 
 The fastest invocation found so far (5.6 s on its own, 7–10 s inside the pipeline with haiku; mostly CLI startup).
