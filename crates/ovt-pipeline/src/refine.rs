@@ -34,3 +34,21 @@ impl Report {
         todo!("write_result")
     }
 }
+
+/// One cleanup, started when recording starts (`cmd_refine` / `cmd_command` before the transcript arrives): it
+/// pre-starts Claude (or notes that it's offline) so it's ready when the transcript comes.
+pub struct Session {
+    // private: the config, the dictionary, the pre-started Claude
+}
+
+impl Session {
+    pub fn start(config: Config) -> Session {
+        todo!("cmd_refine / cmd_command: trap, claude_prestart")
+    }
+
+    /// The cleanup of `raw` (`refine_text`; Command Mode: the instruction), logged like the script logs it. Empty
+    /// `raw` ends the session without work (status "skipped", nothing to paste).
+    pub fn finish(self, raw: &str) -> Report {
+        todo!("refine_text / cmd_command")
+    }
+}

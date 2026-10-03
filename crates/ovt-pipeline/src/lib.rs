@@ -14,5 +14,6 @@ pub mod online;
 pub mod openai;
 pub mod refine;
 pub mod s1;
+pub mod servers;
 pub mod text;
 pub mod whisper;
