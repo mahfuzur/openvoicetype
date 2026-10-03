@@ -159,7 +159,7 @@ fn installed() -> Vec<String> {
     let mut lines: Vec<String> = ["whisper-server.exe", "whisper-cli.exe", "llama-server.exe"]
         .iter()
         .map(|name| {
-            let path = helpers.join(name);
+            let path = pipeline::helper(&helpers, name);
             format!("INFO {name} {}", if path.is_file() { "found" } else { "missing" })
         })
         .collect();

@@ -14,6 +14,7 @@ use ovt_core::mode::DictationMode;
 use ovt_core::settings::Settings;
 use ovt_pipeline::config::Config;
 use ovt_pipeline::refine::{Report, Session};
+use ovt_pipeline::servers::Server;
 use ovt_pipeline::whisper;
 use std::panic::AssertUnwindSafe;
 use std::sync::atomic::{AtomicU32, AtomicU8, Ordering};
@@ -122,9 +123,17 @@ impl Worker {
         if start.settings.uses_s1() {
             self.s1.prepare(pipeline::s1_spec(&start.config, &helpers));
         }
+        let s1_started: Arc<Mutex<Option<Server>>> = Arc::default();
         let session = {
             let config = start.config.clone();
-            std::thread::spawn(move || guarded(|| Session::start(config)))
+            let starter = s1_starter(&start.config, &helpers, Arc::clone(&s1_started));
+            std::thread::spawn(move || {
+                guarded(|| {
+                    let mut session = Session::start(config);
+                    session.set_s1_starter(starter);
+                    session
+                })
+            })
         };
         let finish = match Recorder::start(start.settings.input_device.as_deref(), Arc::clone(&self.level)) {
             Ok(recorder) => self.record(recorder, &start, session),
@@ -134,6 +143,9 @@ impl Worker {
                 Finish::message(message, true, 2.5, Some(Sound::Error))
             }
         };
+        if let Some(server) = s1_started.lock().unwrap_or_else(|e| e.into_inner()).take() {
+            self.s1.adopt(server);
+        }
         self.last_used = Instant::now();
         self.finish(finish);
     }
@@ -261,7 +273,7 @@ impl Worker {
     fn transcribe(&self, start: &Start, wav: &std::path::Path) -> Option<String> {
         let helpers = pipeline::helpers_dir();
         let model = pipeline::whisper_model(&start.settings);
-        let cli = helpers.join("whisper-cli.exe");
+        let cli = pipeline::helper(&helpers, "whisper-cli.exe");
         let result = guarded(|| whisper::transcribe(&start.config, wav, pipeline::WHISPER_PORT, &cli, &model))
             .and_then(|r| r.map_err(|e| applog::write(&format!("TRANSCRIBE failed: {e}"))).ok());
         result.map(|transcript| transcript.text)
@@ -299,6 +311,26 @@ fn finish_session(session: JoinHandle<Option<Session>>, raw: String) -> (Option<
 }
 
 /// Ends a session without work (its pre-started Claude exits), off this thread.
+/// How the cleanup gets S1-mini ready when it falls back to it (`refine_s1`'s `srv_start s1-server`): a server that
+/// already answers is used as is; otherwise one is started here, and the worker adopts it afterwards so the idle timer
+/// stops it.
+fn s1_starter(
+    config: &Config,
+    helpers: &std::path::Path,
+    started: Arc<Mutex<Option<Server>>>,
+) -> impl FnMut() -> bool + Send + 'static {
+    let spec = pipeline::s1_spec(config, helpers);
+    move || {
+        if ovt_pipeline::servers::healthy(spec.port) {
+            return true;
+        }
+        let Some(server) = super::servers::start(spec.clone()) else { return false };
+        let ready = server.healthy();
+        *started.lock().unwrap_or_else(|e| e.into_inner()) = Some(server);
+        ready
+    }
+}
+
 fn drop_session(session: JoinHandle<Option<Session>>) {
     std::thread::spawn(move || {
         if let Ok(Some(session)) = session.join() {

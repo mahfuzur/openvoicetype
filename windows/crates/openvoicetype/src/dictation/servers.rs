@@ -34,6 +34,12 @@ impl Slot {
         }));
     }
 
+    /// Takes over a server started elsewhere (S1-mini started by the cleanup's fallback), replacing the current one.
+    pub(super) fn adopt(&mut self, server: Server) {
+        self.stop();
+        *self = Slot::Ready(Some(server));
+    }
+
     /// Waits for a start in progress.
     pub(super) fn ready(&mut self) {
         if let Slot::Starting(_) = self {
@@ -63,7 +69,7 @@ impl Slot {
     }
 }
 
-fn start(spec: Spec) -> Option<Server> {
+pub(super) fn start(spec: Spec) -> Option<Server> {
     if !spec.binary.is_file() || !spec.model.is_file() {
         applog::write(&format!("SERVER {} or its model is missing", spec.binary.display()));
         return None;

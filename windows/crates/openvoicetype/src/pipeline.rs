@@ -10,7 +10,8 @@ use std::path::{Path, PathBuf};
 /// `WHISPER_PORT`, as in dictate.sh (S1-mini's port is in the pipeline's `Config`).
 pub const WHISPER_PORT: u16 = 8179;
 
-/// `helpers\` next to OpenVoiceType.exe: whisper-server.exe, whisper-cli.exe, llama-server.exe and their DLLs.
+/// `helpers\` next to OpenVoiceType.exe: whisper-server.exe, whisper-cli.exe, llama-server.exe and their DLLs, in
+/// `whisper\` and `llama\` (see `helper`).
 pub fn helpers_dir() -> PathBuf {
     let exe = std::env::current_exe().unwrap_or_default();
     exe.parent().map(|dir| dir.join("helpers")).unwrap_or_else(|| PathBuf::from("helpers"))
@@ -21,10 +22,22 @@ pub fn whisper_model(settings: &Settings) -> PathBuf {
     ovt_core::paths::whisper_dir().join(&settings.whisper_model)
 }
 
+/// A helper program: `helpers\whisper\<name>` or `helpers\llama\<name>` (whisper.cpp and llama.cpp each ship their own,
+/// different `ggml*.dll`, so they can't share a folder), else `helpers\<name>`.
+pub fn helper(helpers: &Path, name: &str) -> PathBuf {
+    let group = if name.starts_with("llama") { "llama" } else { "whisper" };
+    let grouped = helpers.join(group).join(name);
+    if grouped.is_file() {
+        grouped
+    } else {
+        helpers.join(name)
+    }
+}
+
 pub fn whisper_spec(settings: &Settings, helpers: &Path) -> Spec {
     Spec {
         kind: Kind::Whisper,
-        binary: helpers.join("whisper-server.exe"),
+        binary: helper(helpers, "whisper-server.exe"),
         model: whisper_model(settings),
         port: WHISPER_PORT,
         language: "en".into(),
@@ -34,7 +47,7 @@ pub fn whisper_spec(settings: &Settings, helpers: &Path) -> Spec {
 pub fn s1_spec(config: &Config, helpers: &Path) -> Spec {
     Spec {
         kind: Kind::S1,
-        binary: helpers.join("llama-server.exe"),
+        binary: helper(helpers, "llama-server.exe"),
         model: config.s1_model.clone(),
         port: config.s1_port,
         language: "en".into(),

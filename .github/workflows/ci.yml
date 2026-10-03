@@ -102,3 +102,18 @@ jobs:
         run: |
           cargo build --locked -p ovt-pipeline --bin ovt
           DICTATE=target/debug/ovt.exe scripts/test-dictate.sh
+
+      # The app and ovt.exe for a test on a real PC (windows/pc-test/run.ps1 downloads the helpers and the model).
+      - name: Build the Windows app
+        run: |
+          cargo build --release --locked -p openvoicetype-windows -p ovt-pipeline
+          out=dist/OpenVoiceType-windows
+          mkdir -p "$out"
+          cp target/release/OpenVoiceType.exe target/release/ovt.exe "$out/"
+          cp -r prompts windows/pc-test "$out/"
+          mkdir -p "$out/evals" && cp evals/run.py evals/cases.json evals/command_cases.json "$out/evals/"
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: OpenVoiceType-windows
+          path: dist/OpenVoiceType-windows
