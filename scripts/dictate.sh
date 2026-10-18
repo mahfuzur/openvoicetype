@@ -1274,8 +1274,7 @@ transcribe_apple() {
   one_line "$out"
 }
 
-# Cleans up one transcript with Apple's language model: the same system prompt (plus prompts/apple.md, for this small
-# model only) and user message as Claude. On failure the reason goes to ENGINE_ERR_FILE: config (Apple Intelligence off,
+# Cleans up one transcript with Apple's language model: the same system prompt as Claude, and apple_message. On failure the reason goes to ENGINE_ERR_FILE: config (Apple Intelligence off,
 # not eligible, still downloading), limit (rate limited), timeout or error (a refusal, the context size, anything else).
 refine_apple() {
   local raw="$1" bin prompt_file err out status=0 reason
@@ -1285,11 +1284,8 @@ refine_apple() {
   fi
   prompt_file="$(mktemp "$STATE_DIR/system.XXXXXX")"
   err="$(mktemp "$STATE_DIR/apple-error.XXXXXX")"
-  {
-    system_prompt
-    [[ -f "$PROMPTS_DIR/apple.md" ]] && printf '\n\n%s' "$(cat "$PROMPTS_DIR/apple.md")"
-  } >"$prompt_file"
-  out="$(cd /tmp && user_message "$raw" | perl -e 'alarm shift; exec @ARGV or die "exec failed: $!"' "$APPLE_TIMEOUT" \
+  system_prompt >"$prompt_file"
+  out="$(cd /tmp && apple_message "$raw" | perl -e 'alarm shift; exec @ARGV or die "exec failed: $!"' "$APPLE_TIMEOUT" \
     "$bin" cleanup --instructions-file "$prompt_file" 2>"$err")" || status=$?
   rm -f "$prompt_file"
   reason="$(head -n 1 "$err")"
@@ -1306,6 +1302,18 @@ refine_apple() {
   fi
   [[ -n "$(trim "$out")" ]] || { engine_error error "empty answer"; return 1; }
   printf '%s' "$out"
+}
+
+# The user message for Apple's model: the context and vocabulary as for Claude, then the reminder in prompts/apple.md, then
+# the transcript in the system prompt's "Transcript: … Output:" example form. This ~3B model obeyed dictated requests
+# ("write a haiku…") with the <transcript> block; the reminder plus the example form keeps it to cleaning up.
+apple_message() {
+  local raw="$1" vocab
+  vocab="$(vocabulary)"
+  printf '<context app="%s" mode="%s"/>\n' "${APP_NAME//\"/}" "$MODE"
+  [[ -n "$vocab" ]] && printf '<vocabulary>%s</vocabulary>\n' "$vocab"
+  [[ -f "$PROMPTS_DIR/apple.md" ]] && printf '\n%s\n' "$(cat "$PROMPTS_DIR/apple.md")"
+  printf '\nTranscript: %s\nOutput:' "$raw"
 }
 
 # Runs Apple's model on RAW_TEXT; on success sets RESULT, ENGINE=apple and REFINE_STATUS=$1. On failure APPLE_ERROR says

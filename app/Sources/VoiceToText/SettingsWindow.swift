@@ -77,11 +77,11 @@ final class SettingsTabViewController: NSTabViewController {
 struct GeneralPane: View {
     let actions: AppActions
     @ObservedObject private var settings = AppSettings.shared
-    @State private var devices = AudioDevices.inputDevices()
-    @State private var micAllowed = AVCaptureDevice.authorizationStatus(for: .audio) == .authorized
-    @State private var axAllowed = AXIsProcessTrusted()
-    @State private var launchAtLogin = SMAppService.mainApp.status == .enabled
-    @State private var loginError: String?
+    @StoredState private var devices = AudioDevices.inputDevices()
+    @StoredState private var micAllowed = AVCaptureDevice.authorizationStatus(for: .audio) == .authorized
+    @StoredState private var axAllowed = AXIsProcessTrusted()
+    @StoredState private var launchAtLogin = SMAppService.mainApp.status == .enabled
+    @StoredState private var loginError: String?
     private let poll = Timer.publish(every: 1.5, on: .main, in: .common).autoconnect()
 
     var body: some View {
@@ -277,8 +277,8 @@ struct CleanupPane: View {
     @ObservedObject private var settings = AppSettings.shared
     @ObservedObject private var models = ModelManager.shared
     @ObservedObject private var apple = AppleEngines.shared
-    @State private var testResult: (text: String, engine: String, seconds: Double)?
-    @State private var testing = false
+    @StoredState private var testResult: (text: String, engine: String, seconds: Double)?
+    @StoredState private var testing = false
     private static let sample = "um so i think we should uh move the team meeting to thursday at 3 pm "
         + "and can you also invite sarah from the design team"
 
@@ -384,11 +384,11 @@ struct CleanupPane: View {
 /// The OpenAI-compatible endpoint: a service or your own base URL, the model, and the key (kept in the Keychain, per host).
 struct APIEndpointSection: View {
     @ObservedObject private var settings = AppSettings.shared
-    @State private var key = ""
-    @State private var keyStatus: String?
-    @State private var models: [String] = []
-    @State private var loadStatus: String?
-    @State private var loading = false
+    @StoredState private var key = ""
+    @StoredState private var keyStatus: String?
+    @StoredState private var models: [String] = []
+    @StoredState private var loadStatus: String?
+    @StoredState private var loading = false
 
     static let presets: [(name: String, url: String)] = [
         ("Ollama (on this Mac)", "http://localhost:11434/v1"),
@@ -490,9 +490,9 @@ struct APIEndpointSection: View {
 
 struct DictionaryPane: View {
     @StateObject private var dictionary = DictionaryFile()
-    @State private var newTerm = ""
-    @State private var newHeard = ""
-    @State private var newWanted = ""
+    @StoredState private var newTerm = ""
+    @StoredState private var newHeard = ""
+    @StoredState private var newWanted = ""
 
     var body: some View {
         Form {

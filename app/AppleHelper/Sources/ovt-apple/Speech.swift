@@ -45,21 +45,34 @@ struct Transcriber {
 
 enum SpeechEngine {
     /// The supported locale for a Whisper-style language setting: "en", "de"…, "auto" (the system language), or a
-    /// full identifier. The system's own region wins when it speaks that language (en → en_GB for a British Mac).
-    static func locale(for language: String) async -> Locale? {
-        let current = Locale.current
-        let wanted: Locale
-        if language.isEmpty || language == "auto" || language == current.language.languageCode?.identifier {
-            wanted = current
-        } else {
-            wanted = Locale(identifier: language)
+    /// full identifier ("en-GB"). In order: the system's own locale when it speaks that language and is supported (a
+    /// British Mac gets en-GB); the region asked for; the language's main region (en → en-US); any of that language.
+    /// (`supportedLocale(equivalentTo:)` returns an arbitrary variant for an unsupported region such as en-BD.)
+    static func locale(for language: String, kind: TranscriberKind) async -> Locale? {
+        let supported = kind == .speech ? await SpeechTranscriber.supportedLocales : await DictationTranscriber.supportedLocales
+        func find(_ locale: Locale) -> Locale? {
+            let tag = locale.identifier(.bcp47)
+            return supported.first { $0.identifier(.bcp47) == tag }
         }
-        return await SpeechTranscriber.supportedLocale(equivalentTo: wanted)
+        let current = Locale.current
+        let wanted = language.isEmpty || language == "auto" ? current : Locale(identifier: language)
+        guard let code = wanted.language.languageCode?.identifier else { return nil }
+        if current.language.languageCode?.identifier == code, wanted.region == nil || wanted.region == current.region,
+           let match = find(current) {
+            return match
+        }
+        if wanted.region != nil, let match = find(wanted) { return match }
+        if let region = Locale.Language(identifier: code).maximalIdentifier.split(separator: "-").last,
+           let match = find(Locale(identifier: "\(code)-\(region)")) {
+            return match
+        }
+        return supported.filter { $0.language.languageCode?.identifier == code }
+            .min { $0.identifier(.bcp47) < $1.identifier(.bcp47) }
     }
 
     static func transcriber(_ options: Options) async throws -> Transcriber {
         guard SpeechTranscriber.isAvailable else { throw HelperError("speech recognition isn't available on this Mac") }
-        guard let locale = await locale(for: options.locale) else {
+        guard let locale = await locale(for: options.locale, kind: options.transcriber) else {
             throw HelperError("no speech model for \(options.locale)")
         }
         return Transcriber(options.transcriber, locale: locale)

@@ -38,7 +38,7 @@ case "$1" in
       refusal) echo "refusal" >&2; exit 2 ;;
       unavailable) echo "unavailable appleIntelligenceNotEnabled" >&2; exit 2 ;;
     esac
-    printf '%s' "$input" | perl -0777 -ne '/<transcript>\n(.*)\n<\/transcript>/s; print "$1 (apple)"'
+    printf '%s' "$input" | perl -0777 -ne '/Transcript: (.*)\nOutput:/s; print "$1 (apple)"'
     ;;
   *) exit 64 ;;
 esac

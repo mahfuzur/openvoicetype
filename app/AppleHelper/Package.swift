@@ -10,8 +10,8 @@ let package = Package(
     targets: [
         .executableTarget(
             name: "ovt-apple",
-            path: "Sources/ovt-apple",
-            swiftSettings: [.swiftLanguageMode(.v5)]
+            path: "Sources/ovt-apple"
         ),
-    ]
+    ],
+    swiftLanguageModes: [.v5]
 )

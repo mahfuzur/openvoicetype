@@ -5,7 +5,8 @@ import Speech
 enum Status {
     static func json(_ options: Options) async -> String {
         var speech: [String: Any] = ["available": false, "locale": "", "assets": "unsupported"]
-        if let transcriber = try? await SpeechEngine.transcriber(options), let locale = await SpeechEngine.locale(for: options.locale) {
+        if let transcriber = try? await SpeechEngine.transcriber(options),
+           let locale = await SpeechEngine.locale(for: options.locale, kind: options.transcriber) {
             speech = ["available": true, "locale": locale.identifier, "assets": await SpeechEngine.assetStatus(transcriber)]
         }
         let reason = Cleanup.unavailableReason()

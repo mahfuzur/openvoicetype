@@ -42,10 +42,10 @@ struct SetupView: View {
     @ObservedObject private var settings = AppSettings.shared
     @ObservedObject private var models = ModelManager.shared
     @ObservedObject private var claude = ClaudeCLI.shared
-    @State private var micStatus = AVCaptureDevice.authorizationStatus(for: .audio)
-    @State private var axAllowed = AXIsProcessTrusted()
-    @State private var tryText = ""
-    @State private var moveError: String?
+    @StoredState private var micStatus = AVCaptureDevice.authorizationStatus(for: .audio)
+    @StoredState private var axAllowed = AXIsProcessTrusted()
+    @StoredState private var tryText = ""
+    @StoredState private var moveError: String?
     private let poll = Timer.publish(every: 1, on: .main, in: .common).autoconnect()
 
     var body: some View {
