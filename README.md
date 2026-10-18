@@ -114,6 +114,7 @@ be carried out.
 |---|---|---|---|
 | Claude Haiku (default) | 17/17 (16/17 in some runs) | 8/8 | 3.4 s with the CLI's startup; about 1.2 s pre-started, as in the app |
 | S1-mini (on this Mac, offline) | 8/17 | 7/8 | 0.7 s |
+| Apple Intelligence (on this Mac, offline; macOS 26+, measured 2026-10-18 on macOS 27) | 8/17 | 7/8 | 1.8 s |
 | Ollama llama3.2, 3B (on this Mac) | 9/17 | 3/8 | 1.8 s |
 
 **Command Mode** has its own 20 cases (`evals/run.py --command`): edits, targeted changes, tone, lists, translation, a
@@ -126,6 +127,9 @@ takes 3.7 s one-shot (25/25), and about 1.2 s when it's pre-started while you sp
 
 **From stop to text:** a median of **2.3 s** end to end on short sentences (Whisper about 1.1 s, Claude about 1.2 s;
 `evals/run.py --e2e --timing --jobs 1`). In real use, the app logs 2.7 s for 8 s of speech and 3.5–5.7 s for 17–22 s.
+Apple's speech engine (macOS 26+) transcribes while you speak: its text is ready about 0.1 s after you stop. It mishears
+technical terms more often than Whisper ("posters" for Postgres), which Claude's cleanup mostly repairs, so Whisper stays the
+default.
 
 **Caveats:**
 - The test speech is synthesized with macOS `say`, not recorded from real voices.

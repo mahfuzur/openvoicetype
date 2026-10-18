@@ -324,6 +324,14 @@ env -u ANTHROPIC_API_KEY -u ANTHROPIC_AUTH_TOKEN MAX_THINKING_TOKENS=0 CLAUDE_CO
   model only.
 - **Never call Apple's `/usr/bin/fm` CLI**: its license forbids programmatic use. `@Generable` needs Xcode's macro plugin:
   don't use it (CLT only).
+- **Write `@StoredState`, never `@State`** in the app: Swift 6.4 makes `@State` a macro whose plugin ships only with Xcode,
+  so CLT builds fail (`StoredState.swift` is a typealias for `SwiftUI.State`).
+- Apple's model gets `apple_message()`: context and vocabulary, then `prompts/apple.md` (a reminder), then
+  `Transcript: … / Output:` like the prompt's examples. With Claude's `<transcript>` message it wrote the haikus and emails
+  it was dictated. Eval 15/25 (S1-mini 15/25), 1.8 s. Apple speech: 0.5 s per file, 79 ms after stop when live, but worse on
+  technical terms than Whisper, so Whisper stays the default.
+- **Gotcha:** installing the Command Line Tools over an old copy (no package receipt) left stale `PackageDescription`
+  interfaces and every manifest failed to link. Remove `/Library/Developer/CommandLineTools` before reinstalling.
 
 ## Commands
 
