@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # Tests dictate.sh's app contract on macOS and Linux without a microphone, Whisper or a Claude login: `refine` with
 # cleanup off, the pre-started and one-shot Claude calls (scripts/testdata/fake-claude), a usage limit, offline, the
-# online check, the server pid check and log rotation. Runs in a temporary HOME, so your logs and settings are untouched.
+# online check, Apple's on-device engines (scripts/testdata/fake-ovt-apple), the server pid check and log rotation. Runs in a temporary HOME, so your logs and settings are untouched.
 #
 #   scripts/test-dictate.sh        (CI runs it on both platforms)
 set -uo pipefail
@@ -13,6 +13,9 @@ trap 'rm -rf "$SANDBOX"' EXIT
 export HOME="$SANDBOX/home" TMPDIR="$SANDBOX/tmp" XDG_RUNTIME_DIR="$SANDBOX/run"
 unset XDG_CONFIG_HOME XDG_DATA_HOME XDG_STATE_HOME VTT_CONFIG
 export VTT_CLAUDE_BIN="$REPO_DIR/scripts/testdata/fake-claude" VTT_QUIET=on
+# No Apple helper (a build of it in the repo would otherwise be found), except in the Apple tests below.
+export VTT_APPLE_HELPER=off
+FAKE_APPLE="$REPO_DIR/scripts/testdata/fake-ovt-apple"
 # No connection to api.anthropic.com before each fake Claude call, and a default route even with no network (stubs in
 # ~/.local/bin, which dictate.sh puts first on its PATH), so the tests also pass offline; the check itself is tested
 # below with the real commands. English dates for the reset-time check.
@@ -78,6 +81,66 @@ check "reset time formatted" "$([[ "$resets" =~ ^[A-Z][a-z]{2}\ [0-9]{1,2},\ [0-
 # Offline: Claude is skipped.
 out="$(printf 'please send the report by friday' | VTT_OFFLINE=on VTT_S1_FALLBACK=off VTT_RESULT_FILE="$rf" bash "$D" refine)"
 check "offline" "$? $(json error "$rf")" "3 offline"
+
+# Apple's on-device engines (macOS only; on Linux they're never available).
+if [[ "$(uname -s)" == Darwin ]]; then
+  # The availability check is cached for a minute; each test fakes a different state.
+  apple() { VTT_APPLE_HELPER="$FAKE_APPLE" VTT_RESULT_FILE="$rf" APPLE_STATUS_TTL=0 "$@"; }
+  out="$(printf 'please send the report by friday' | apple env VTT_CLEANUP=apple bash "$D" refine)"
+  check "apple cleanup" "$? $out" "0 please send the report by friday (apple)"
+  check "apple cleanup: result engine" "$(json engine "$rf")" apple
+  grep -q 'apple=[0-9]*ms refine=apple' "$LOGS/dictate.log" && r=yes || r=no
+  check "apple cleanup: logged" "$r" yes
+  out="$(printf 'please send the report by friday' | apple env VTT_CLEANUP=apple FAKE_APPLE_LLM=appleIntelligenceNotEnabled \
+    bash "$D" refine)"
+  check "apple cleanup unavailable" "$? $out $(json error "$rf")" "3 please send the report by friday config"
+  out="$(printf 'please send the report by friday' | apple env VTT_CLEANUP=apple FAKE_APPLE_FAIL=refusal bash "$D" refine)"
+  check "apple cleanup refused" "$? $(json error "$rf")" "3 error"
+  out="$(printf 'please send the report by friday' | apple env VTT_CLEANUP=apple VTT_MODE=code bash "$D" refine)"
+  check "apple cleanup skips code mode" "$? $out" "0 please send the report by friday"
+  # The fallback: Apple's model replaces Claude (exit 4), and the online engine's reason is kept for the overlay.
+  out="$(printf 'please send the report by friday' | apple env FAKE_MODE=limit CLAUDE_PRESTART=off bash "$D" refine)"
+  check "apple fallback" "$? $out" "4 please send the report by friday (apple)"
+  check "apple fallback: result" "$(json engine "$rf") $(json error "$rf")" "apple limit"
+  out="$(printf 'please send the report by friday' | apple env FAKE_MODE=limit CLAUDE_PRESTART=off FAKE_APPLE_FAIL=refusal \
+    bash "$D" refine)"
+  check "apple fallback failed, no S1-mini" "$? $(json error "$rf")" "3 limit"
+  out="$(printf 'please send the report by friday' | apple env FAKE_MODE=limit CLAUDE_PRESTART=off FALLBACK_ENGINE=s1 \
+    bash "$D" refine)"
+  check "fallback forced to S1-mini (not installed)" "$?" 3
+  out="$(printf 'please send the report by friday' | apple env FAKE_MODE=limit CLAUDE_PRESTART=off VTT_S1_FALLBACK=off \
+    bash "$D" refine)"
+  check "fallback off" "$?" 3
+  # Speech: a finished WAV (one second of silence; the fake doesn't listen), and the live stream.
+  wav="$SANDBOX/one-second.wav"
+  perl -e 'print pack("A4VA4A4VvvVVvvA4V", "RIFF", 36 + 32000, "WAVE", "fmt ", 16, 1, 1, 16000, 32000, 2, 16, "data", 32000), "\0" x 32000' >"$wav"
+  out="$(apple env VTT_SPEECH_ENGINE=apple bash "$D" transcribe "$wav")"
+  check "apple transcribe" "$? $out" "0 Hello from Apple."
+  grep -q 'TRANSCRIBE audio=1[.0]*s apple=' "$LOGS/dictate.log" && r=yes || r=no
+  check "apple transcribe: logged" "$r" yes
+  apple env VTT_SPEECH_ENGINE=apple FAKE_APPLE_FAIL=speech bash "$D" transcribe "$wav" >/dev/null 2>&1
+  grep -q 'WARN Apple speech unavailable or failed, using Whisper' "$LOGS/dictate.log" && r=yes || r=no
+  check "apple transcribe falls back to Whisper" "$r" yes
+  rm -f "$STATE/apple-status"
+  apple env VTT_SPEECH_ENGINE=apple FAKE_APPLE_SPEECH=supported bash "$D" transcribe "$wav" >/dev/null 2>&1
+  check "apple transcribe: model not downloaded" "$(grep -c 'WARN Apple speech unavailable or failed' "$LOGS/dictate.log")" 2
+  out="$(head -c 64000 /dev/zero | apple bash "$D" transcribe-stream)"
+  check "apple stream" "$? $out" "0 Hello from the stream."
+  grep -q 'TRANSCRIBE audio=2.00s apple=42ms stream=on' "$LOGS/dictate.log" && r=yes || r=no
+  check "apple stream: logged" "$r" yes
+  out="$(head -c 8000 /dev/zero | apple bash "$D" transcribe-stream)"
+  check "apple stream: too short" "$? [$out]" "0 []"
+  out="$(head -c 64000 /dev/zero | apple env FAKE_APPLE_SPEECH=none bash "$D" transcribe-stream)"
+  check "apple stream unavailable" "$? [$out]" "2 []"
+  out="$(head -c 64000 /dev/zero | apple env FAKE_APPLE_FAIL=speech bash "$D" transcribe-stream)"
+  check "apple stream failed" "$? [$out]" "2 []"
+  out="$(apple env FAKE_APPLE_LLM=modelNotReady bash "$D" apple status)"
+  check "apple status" "$(printf '%s' "$out" | perl -MJSON::PP -0777 -ne 'print decode_json($_)->{llm}{reason}')" modelNotReady
+else
+  out="$(printf 'please send the report by friday' | VTT_APPLE_HELPER="$FAKE_APPLE" VTT_CLEANUP=apple VTT_RESULT_FILE="$rf" \
+    bash "$D" refine)"
+  check "apple cleanup unavailable on Linux" "$? $(json error "$rf")" "3 config"
+fi
 
 # The online check itself (needs the internet, as CI has; skipped with no network at all).
 eval "$(sed -n '/^has_default_route()/,/^}/p; /^is_offline()/,/^}/p; /^tcp_reachable()/,/^}/p' "$D")"

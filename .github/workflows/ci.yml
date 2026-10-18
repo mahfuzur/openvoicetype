@@ -47,6 +47,26 @@ jobs:
           name: OpenVoiceType-app
           path: app/build/VoiceToText.app
 
+  # Apple's on-device engines (docs/plans/M5.6-apple-on-device.md): ovt-apple needs the macOS 26 SDK, and the app must
+  # build with the newer Swift too. The job above keeps checking the older toolchain (no ovt-apple).
+  apple-engines:
+    runs-on: macos-26
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Show the toolchain
+        run: swift --version && xcrun --show-sdk-version
+
+      - name: Build ovt-apple
+        run: |
+          swift build -c release --package-path app/AppleHelper
+          "$(swift build -c release --package-path app/AppleHelper --show-bin-path)/ovt-apple" status || true
+
+      - name: Build the app with the new toolchain (no bundled whisper/llama, to keep it quick)
+        run: |
+          BUNDLE_DEPS=off ./scripts/build-app.sh
+          test -x app/build/VoiceToText.app/Contents/Helpers/ovt-apple
+
   # The Linux app (docs/plans/M7-linux.md): the same dictate.sh contract, and the Rust crates.
   linux:
     runs-on: ubuntu-24.04

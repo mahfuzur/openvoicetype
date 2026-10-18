@@ -5,6 +5,7 @@
 #
 #   VERSION=0.2.0      sets the version (default: the one in app/Info.plist); release.sh passes the tag
 #   BUNDLE_DEPS=off    skips the bundled helpers (the script then uses Homebrew's)
+#   BUNDLE_APPLE=off   skips ovt-apple, Apple's on-device engines (built only with Swift 6.2+ and the macOS 26 SDK)
 #   SIGN_IDENTITY=...  signs with this identity (release.sh); default: the local one from setup-signing.sh
 set -euo pipefail
 
@@ -16,6 +17,7 @@ PKG_DIR="$REPO_DIR/app"
 OUT="$PKG_DIR/build/$APP_NAME.app"
 INSTALL_DIR="/Applications"
 BUNDLE_DEPS="${BUNDLE_DEPS:-on}"
+BUNDLE_APPLE="${BUNDLE_APPLE:-on}"
 
 # Prerequisites first, with what to do about them (a fresh Mac has neither).
 if ! xcode-select -p >/dev/null 2>&1 || ! command -v swift >/dev/null; then
@@ -53,6 +55,27 @@ if [[ "$BUNDLE_DEPS" == on ]]; then
   mkdir -p "$OUT/Contents/Helpers"
   cp "$DEPS_BIN"/whisper-server "$DEPS_BIN"/whisper-cli "$DEPS_BIN"/llama-server "$OUT/Contents/Helpers/"
   cp "$DEPS_BIN"/../licenses/*.txt "$OUT/Contents/Resources/ThirdPartyLicenses/"
+fi
+
+# ovt-apple (app/AppleHelper): SpeechAnalyzer and Apple's language model need the macOS 26 SDK. An older toolchain
+# builds the app without it, and the Apple engines just don't appear.
+apple_toolchain() {
+  local swift sdk
+  swift="$(swift --version 2>/dev/null | sed -nE 's/.*Swift version ([0-9]+)\.([0-9]+).*/\1 \2/p' | head -1)"
+  sdk="$(xcrun --show-sdk-version 2>/dev/null | cut -d. -f1)"
+  [[ -n "$swift" && -n "$sdk" ]] || return 1
+  read -r major minor <<<"$swift"
+  ((major > 6 || (major == 6 && minor >= 2))) && ((sdk >= 26))
+}
+if [[ "$BUNDLE_APPLE" == on ]]; then
+  if apple_toolchain; then
+    echo "Building ovt-apple..."
+    swift build -c release --package-path "$PKG_DIR/AppleHelper"
+    mkdir -p "$OUT/Contents/Helpers"
+    cp "$(swift build -c release --package-path "$PKG_DIR/AppleHelper" --show-bin-path)/ovt-apple" "$OUT/Contents/Helpers/"
+  else
+    echo "note: Swift 6.2+ and the macOS 26 SDK are needed for Apple's on-device engines; building without ovt-apple" >&2
+  fi
 fi
 
 # Sign with a stable identity so permission grants survive rebuilds and updates: SIGN_IDENTITY (release.sh), or the

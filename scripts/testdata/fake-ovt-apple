@@ -1,0 +1,44 @@
+#!/usr/bin/env bash
+# A stand-in for the ovt-apple helper (Apple's on-device engines), for scripts/test-dictate.sh. Its "cleanup" is the
+# transcript followed by " (apple)"; its transcripts are fixed sentences.
+#   FAKE_APPLE_SPEECH=installed (default) | supported (model not downloaded) | none
+#   FAKE_APPLE_LLM=available (default) | <unavailable reason>
+#   FAKE_APPLE_FAIL=speech | refusal | unavailable
+case "$1" in
+  status)
+    speech="${FAKE_APPLE_SPEECH:-installed}" llm="${FAKE_APPLE_LLM:-available}"
+    if [[ "$speech" == none ]]; then s='{"available":false,"locale":"","assets":"unsupported"}'
+    else s="{\"available\":true,\"locale\":\"en_US\",\"assets\":\"$speech\"}"; fi
+    if [[ "$llm" == available ]]; then l='{"available":true,"reason":""}'
+    else l="{\"available\":false,\"reason\":\"$llm\"}"; fi
+    echo "{\"speech\":$s,\"llm\":$l}"
+    ;;
+  speech-install) echo "progress 0.5"; echo installed ;;
+  transcribe)
+    [[ "${FAKE_APPLE_FAIL:-}" == speech ]] && { echo "error: the analyzer failed" >&2; exit 1; }
+    stats=""
+    while (($#)); do
+      case "$1" in
+        --stats-file) stats="$2"; shift ;;
+        --pcm) pcm=1 ;;
+      esac
+      shift
+    done
+    if [[ -n "${pcm:-}" ]]; then
+      bytes="$(wc -c | tr -d ' ')"
+      [[ -n "$stats" ]] && perl -e 'printf "%.2f 42\n", $ARGV[0] / 32000' "$bytes" >"$stats"
+      echo "Hello from the stream."
+    else
+      echo "Hello from Apple."
+    fi
+    ;;
+  cleanup)
+    input="$(cat)"
+    case "${FAKE_APPLE_FAIL:-}" in
+      refusal) echo "refusal" >&2; exit 2 ;;
+      unavailable) echo "unavailable appleIntelligenceNotEnabled" >&2; exit 2 ;;
+    esac
+    printf '%s' "$input" | perl -0777 -ne '/<transcript>\n(.*)\n<\/transcript>/s; print "$1 (apple)"'
+    ;;
+  *) exit 64 ;;
+esac

@@ -28,6 +28,13 @@ final class Recorder {
 
     /// Called on the main queue.
     var onLevel: ((Float) -> Void)?
+    /// Called on the audio thread with each converted buffer as 16 kHz mono 16-bit PCM (what goes into the WAV), for an
+    /// engine that transcribes while you speak (Apple's). Keep it quick: it runs before the next buffer is taken.
+    var onPCM: ((Data) -> Void)? {
+        get { fileLock.lock(); defer { fileLock.unlock() }; return pcmHandler }
+        set { fileLock.lock(); pcmHandler = newValue; fileLock.unlock() }
+    }
+    private var pcmHandler: ((Data) -> Void)?
     private(set) var deviceName = "Microphone"
 
     private var engine: AVAudioEngine?
@@ -193,7 +200,17 @@ final class Recorder {
             guard error == nil, converted.frameLength > 0 else { return }
             self.fileLock.lock()
             try? self.file?.write(from: converted)
+            let pcmHandler = self.pcmHandler
             self.fileLock.unlock()
+            if let pcmHandler, let samples = converted.floatChannelData?[0] {
+                let count = Int(converted.frameLength)
+                var data = Data(count: count * 2)
+                data.withUnsafeMutableBytes { raw in
+                    let out = raw.bindMemory(to: Int16.self)
+                    for index in 0..<count { out[index] = Int16(max(-1, min(1, samples[index])) * 32767) }
+                }
+                pcmHandler(data)
+            }
         }
 
         var startError: Error?

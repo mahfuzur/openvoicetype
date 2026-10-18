@@ -1,5 +1,21 @@
 # Changelog
 
+## Unreleased
+
+**Apple's on-device engines (macOS 26 and later).** The whole pipeline can now run on Apple's own models, with nothing to
+download from us.
+
+- **Apple's speech engine:** Settings → Speech → **Apple, on this Mac**. It transcribes while you speak, so the text is
+  ready right after you stop. macOS downloads and manages the language model (a Download button is in Settings), and no
+  extra permission is needed. If it's unavailable or fails, Whisper is used.
+- **Apple Intelligence cleanup:** Settings → Cleanup → **Apple Intelligence (on this Mac, offline)**, with the same prompt
+  and the same check for dropped numbers and negations. Like S1-mini, it leaves Code mode as raw text.
+- **A better offline fallback:** when Claude or the API is unavailable, Apple Intelligence cleans up if it's on, otherwise
+  S1-mini. On a new Mac without Claude, setup picks Apple Intelligence before S1-mini.
+- Both come from a small helper, `ovt-apple`, built with the macOS 26 SDK. On macOS 13–15 nothing changes.
+- `dictate.sh`: `SPEECH_ENGINE=apple`, `CLEANUP=apple`, `FALLBACK_ENGINE`, `transcribe-stream`, `apple status|speech-install`.
+  `evals/run.py --cleanup apple` and `--e2e --engine apple`.
+
 ## 0.5.0 (2026-09-25)
 
 **Command Mode: edit text by voice.** Select text, press **⌃⌥⇧Space**, and say how to change it.

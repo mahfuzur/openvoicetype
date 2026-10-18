@@ -22,7 +22,8 @@ Speech is transcribed **on your Mac** with [whisper.cpp](https://github.com/ggml
 (filler words, punctuation, numbers, lists, email addresses) runs through the
 [Claude Code](https://docs.anthropic.com/en/docs/claude-code) CLI you're already signed in to. That uses your Claude plan's
 normal usage limits, with no API key. You can also clean up with any OpenAI-compatible endpoint (Ollama, LM Studio,
-OpenAI, Groq…) or fully offline with S1-mini.
+OpenAI, Groq…) or fully offline with S1-mini. On macOS 26 and later, Apple's own on-device engines are options too:
+SpeechAnalyzer for speech and Apple Intelligence for cleanup.
 
 > **Early software.** This is a young project with one maintainer, tested mainly on one Mac (M3 Pro). It isn't notarized
 > by Apple yet, so the first launch needs **Open Anyway**. Bug reports are very welcome.
@@ -54,7 +55,8 @@ OpenAI, Groq…) or fully offline with S1-mini.
 - **App-aware modes:** casual for chat, paragraphs for email, exact identifiers for code, lists for notes.
 - **Dictionary** for names and terms, a **floating indicator** (listening, transcribing, polishing, pasted), a microphone
   picker, and clear messages when something goes wrong ("Claude limit reached · resets 3:45 PM").
-- **Nothing lost:** if cleanup fails, S1-mini cleans up on your Mac instead, and failing that you get Whisper's text.
+- **Nothing lost:** if cleanup fails, Apple Intelligence (macOS 26+) or S1-mini cleans up on your Mac instead, and failing
+  that you get Whisper's text.
 
 ## Which install is for me?
 
@@ -91,6 +93,9 @@ brew install cmake
 ./scripts/setup-signing.sh         # once: a local signing identity, so macOS keeps permissions across rebuilds
 ./scripts/build-app.sh --install   # builds whisper.cpp and llama.cpp into the app (about 3 minutes the first time)
 ```
+
+Apple's on-device engines (`app/AppleHelper`) need Swift 6.2 and the macOS 26 SDK (Command Line Tools 26 or later). Older
+tools build the app without them.
 
 ## Using it
 
@@ -131,12 +136,13 @@ takes 3.7 s one-shot (25/25), and about 1.2 s when it's pre-started while you sp
 
 ## Privacy
 
-- **Audio** is transcribed on your Mac and deleted straight away. It never leaves the Mac.
+- **Audio** is transcribed on your Mac (by Whisper, or Apple's on-device engine) and deleted straight away. It never
+  leaves the Mac.
 - **Transcript text** goes only to the cleanup engine you pick:
   - your own Claude Code (Anthropic's terms and your plan's limits apply: [docs/TERMS.md](docs/TERMS.md)). Command Mode
     sends the selected text and your instruction, only when you press its key;
   - an API endpoint you configure (a local Ollama or LM Studio keeps it on your Mac);
-  - or nowhere, with S1-mini or cleanup off.
+  - or nowhere, with S1-mini, Apple Intelligence or cleanup off.
 - **No servers, telemetry or analytics.** The app never reads or stores your Claude login, keeps API keys in your Keychain,
   and ignores an exported `ANTHROPIC_API_KEY`, so nothing quietly bills the API.
 - **Logs** keep timings and outcomes, not your words (unless you turn that on for debugging). They're private to you and
@@ -146,7 +152,7 @@ takes 3.7 s one-shot (25/25), and about 1.2 s when it's pre-started while you sp
 ## Contributing
 
 Contributions are welcome: see [CONTRIBUTING.md](CONTRIBUTING.md) for the setup and the eval workflow, and the
-[roadmap](docs/ROADMAP.md) for what's next (on-screen context, snippets, Apple's speech engine). New to the code?
+[roadmap](docs/ROADMAP.md) for what's next (on-screen context, snippets, more providers). New to the code?
 [docs/diagrams](docs/diagrams/) shows how a dictation travels through the app, with every box linked to its source.
 
 ## Acknowledgements
