@@ -13,7 +13,9 @@ permissions:
 
 jobs:
   release:
-    runs-on: macos-14
+    # The macOS 26 SDK (Xcode 26), so the DMG includes ovt-apple, Apple's on-device engines (M5.6). The app still runs
+    # on macOS 13.3 and later; the Apple options appear only on macOS 26.
+    runs-on: macos-26
     steps:
       - uses: actions/checkout@v4
         with:
@@ -36,6 +38,7 @@ jobs:
         run: |
           command -v cmake || brew install cmake
           ./scripts/release.sh "$GITHUB_REF_NAME"
+          test -x app/build/VoiceToText.app/Contents/Helpers/ovt-apple
 
       - name: Publish the release
         env:

@@ -42,10 +42,10 @@ struct SetupView: View {
     @ObservedObject private var settings = AppSettings.shared
     @ObservedObject private var models = ModelManager.shared
     @ObservedObject private var claude = ClaudeCLI.shared
-    @State private var micStatus = AVCaptureDevice.authorizationStatus(for: .audio)
-    @State private var axAllowed = AXIsProcessTrusted()
-    @State private var tryText = ""
-    @State private var moveError: String?
+    @StoredState private var micStatus = AVCaptureDevice.authorizationStatus(for: .audio)
+    @StoredState private var axAllowed = AXIsProcessTrusted()
+    @StoredState private var tryText = ""
+    @StoredState private var moveError: String?
     private let poll = Timer.publish(every: 1, on: .main, in: .common).autoconnect()
 
     var body: some View {
@@ -109,13 +109,18 @@ struct SetupView: View {
                     }
                 }
                 Section {
-                    stepHeader(first + 3, "Cleanup", done: claude.isReady || ModelCatalog.s1Mini.isInstalled,
+                    stepHeader(first + 3, "Cleanup", done: claude.isReady || ModelCatalog.s1Mini.isInstalled
+                                   || AppleEngines.shared.modelAvailable,
                                detail: "AI removes filler words and fixes punctuation. Claude runs through your own Claude Code; "
                                    + "S1-mini works offline. You can have both: S1-mini steps in when Claude can't.")
                     ClaudeStatusView()
                     ModelRow(model: ModelCatalog.s1Mini, allowDelete: false)
                     if !claude.isReady && ModelCatalog.s1Mini.isInstalled && settings.cleanupEngine == "s1" {
                         Text("Using S1-mini for now. Once Claude Code is ready, switch in Settings → Cleanup.")
+                            .font(.caption).foregroundColor(.secondary)
+                    }
+                    if !claude.isReady && settings.cleanupEngine == "apple" {
+                        Text("Using Apple Intelligence, on this Mac, for now. Once Claude Code is ready, it takes over.")
                             .font(.caption).foregroundColor(.secondary)
                     }
                 }
@@ -152,26 +157,34 @@ struct SetupView: View {
         .onAppear { claude.refresh() }
         .onChange(of: claude.status) { _ in chooseEngine() }
         .onChange(of: models.revision) { _ in chooseEngine() }
+        .onReceive(AppleEngines.shared.$status) { _ in chooseEngine() }
     }
 
+    /// A Whisper model, or Apple's speech engine when it's chosen and its model is installed.
     private var selectedModelInstalled: Bool {
-        ModelCatalog.whisperModel(named: settings.whisperModel)?.isInstalled ?? false
+        (ModelCatalog.whisperModel(named: settings.whisperModel)?.isInstalled ?? false)
+            || (settings.speechEngine == "apple" && AppleEngines.shared.speechReady)
     }
 
     private var ready: Bool {
         micStatus == .authorized && selectedModelInstalled
     }
 
-    /// On a new Mac with no Claude yet, S1-mini cleans up so dictation works now; once Claude is ready it becomes the
-    /// default again. It never changes the choice of someone who finished setup before (running it again).
+    /// On a new Mac with no Claude yet, Apple Intelligence (when it's on) or S1-mini cleans up so dictation works now;
+    /// once Claude is ready it becomes the default again. It never changes the choice of someone who finished setup
+    /// before (running it again).
     private func chooseEngine() {
         guard !settings.setupCompleted else { return }
         if claude.isReady {
-            if settings.cleanupEngine == "s1" { settings.cleanupEngine = "claude" }
+            if settings.cleanupEngine == "s1" || settings.cleanupEngine == "apple" { settings.cleanupEngine = "claude" }
         } else if case .checking = claude.status {
             return
-        } else if ModelCatalog.s1Mini.isInstalled && settings.cleanupEngine != "openai" {
-            settings.cleanupEngine = "s1"
+        } else if settings.cleanupEngine != "openai" {
+            if AppleEngines.shared.modelAvailable {
+                settings.cleanupEngine = "apple"
+            } else if ModelCatalog.s1Mini.isInstalled {
+                settings.cleanupEngine = "s1"
+            }
         }
     }
 

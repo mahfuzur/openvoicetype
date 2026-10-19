@@ -6,10 +6,13 @@ which tests the cleanup layer on its own. With --e2e: synthesizes the case's `sa
 then runs `dictate.sh transcribe` + `refine`, which tests Whisper, cleanup and post-processing together.
 
 Usage:
-  evals/run.py [--model haiku|sonnet] [--cleanup claude|s1|openai] [--case ID ...] [--e2e [--timing]] [--runs N] [--jobs N] [--show]
+  evals/run.py [--model haiku|sonnet] [--cleanup claude|s1|openai|apple] [--case ID ...] [--e2e [--timing]
+               [--engine whisper|apple [--transcriber speech|dictation]]] [--runs N] [--jobs N] [--show]
 
 --cleanup s1 evaluates S1-mini (offline, through llama-server) instead of Claude. --cleanup openai evaluates the
 OpenAI-compatible endpoint in OPENAI_BASE_URL / OPENAI_MODEL (and OPENAI_API_KEY) from the environment.
+--cleanup apple evaluates Apple's on-device model, and --e2e --engine apple Apple's SpeechAnalyzer instead of Whisper
+(macOS 26+, through the ovt-apple helper: the installed app's copy, or a build in app/AppleHelper).
 Cases have a category: formatting (the default) or safety (meaning kept, the transcript never obeyed). A case where the
 meaning guard pasted Whisper's text counts as a failure, so false alarms show up here.
 
@@ -58,6 +61,8 @@ def case_env(case, args, log_file):
         "VTT_QUIET": "on",
         "VTT_REFINE": "on",
         "VTT_CLEANUP": args.cleanup,
+        "VTT_SPEECH_ENGINE": args.engine,
+        "VTT_APPLE_TRANSCRIBER": args.transcriber,
         # Measure the selected engine alone: a Claude failure must not be hidden by the S1-mini fallback.
         "VTT_S1_FALLBACK": "off",
         "VTT_CLAUDE_MODEL": args.model,
@@ -210,9 +215,14 @@ def run_case(case, args, log_file):
 def main():
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     parser.add_argument("--model", default="haiku", help="Claude model (with --cleanup claude)")
-    parser.add_argument("--cleanup", default="claude", choices=["claude", "s1", "openai"])
+    parser.add_argument("--cleanup", default="claude", choices=["claude", "s1", "openai", "apple"],
+                        help="apple: Apple's on-device model (macOS 26+, Apple Intelligence on)")
     parser.add_argument("--case", action="append", help="run only these case ids")
     parser.add_argument("--e2e", action="store_true", help="synthesize speech and run Whisper too")
+    parser.add_argument("--engine", default="whisper", choices=["whisper", "apple"],
+                        help="with --e2e: the speech engine (apple: SpeechAnalyzer, macOS 26+)")
+    parser.add_argument("--transcriber", default="speech", choices=["speech", "dictation"],
+                        help="with --engine apple: SpeechTranscriber or DictationTranscriber")
     parser.add_argument("--runs", type=int, default=1, help="repeat each case (flakiness check)")
     parser.add_argument("--jobs", type=int, default=0, help="parallel cases (default 4, or 2 with --e2e)")
     parser.add_argument("--show", action="store_true", help="print every output, not just failures")
@@ -220,20 +230,33 @@ def main():
     parser.add_argument("--command", action="store_true", help="evaluate Command Mode (evals/command_cases.json)")
     parser.add_argument("--cold", action="store_true", help="time a plain one-shot claude -p per case, for comparison")
     args = parser.parse_args()
-    if args.command and args.cleanup == "s1":
+    if args.command and args.cleanup in ("s1", "apple"):
         sys.exit("Command Mode needs an engine that follows instructions: --cleanup claude or openai")
 
     cases = json.loads((COMMAND_CASES if args.command else CASES).read_text())
     if args.case:
         cases = [c for c in cases if c["id"] in args.case]
     jobs = args.jobs or (2 if args.e2e else 4)
-    engine = {"claude": args.model, "s1": "s1", "openai": os.environ.get("OPENAI_MODEL", "openai")}[args.cleanup]
+    engine = {"claude": args.model, "s1": "s1", "apple": "apple",
+              "openai": os.environ.get("OPENAI_MODEL", "openai")}[args.cleanup]
     if args.cleanup == "s1" and run_script(["s1-server", "start"])[0] != 0:
         sys.exit("S1-mini is not installed or did not start (run scripts/install.sh)")
+    if args.cleanup == "apple" or (args.e2e and args.engine == "apple"):
+        _, status = run_script(["apple", "status"])
+        try:
+            status = json.loads(status or "{}")
+        except json.JSONDecodeError:
+            status = {}
+        if args.cleanup == "apple" and not status.get("llm", {}).get("available"):
+            sys.exit(f"Apple's on-device model is unavailable: {status.get('llm', {}).get('reason') or 'no ovt-apple helper'}")
+        speech = status.get("speech", {})
+        if args.e2e and args.engine == "apple" and not (speech.get("available") and speech.get("assets") == "installed"):
+            sys.exit(f"Apple speech is unavailable (model {speech.get('assets') or 'missing'}; Settings → Speech downloads it)")
 
     RESULTS.mkdir(parents=True, exist_ok=True)
     stamp = datetime.now().strftime("%Y%m%d-%H%M%S")
-    label = f"{stamp}-{engine}{'-e2e' if args.e2e else ''}{'-command' if args.command else ''}{'-cold' if args.cold else ''}"
+    speech = f"-{args.engine}{'-' + args.transcriber if args.engine == 'apple' else ''}" if args.e2e else ""
+    label = f"{stamp}-{engine}{'-e2e' if args.e2e else ''}{speech}{'-command' if args.command else ''}{'-cold' if args.cold else ''}"
     log_file = RESULTS / f"{label}.log"
 
     work = [case for case in cases for _ in range(args.runs)]
@@ -256,7 +279,7 @@ def main():
     seconds = [r["seconds"] for r in results]
     median = statistics.median(seconds) if seconds else 0
     print(f"\n{passed}/{len(results)} passed ({100 * passed / max(len(results), 1):.0f}%)  "
-          f"engine={engine}  median={median:.1f}s{'  e2e' if args.e2e else ''}")
+          f"engine={engine}  median={median:.1f}s{'  e2e speech=' + speech[1:] if args.e2e else ''}")
     for category in sorted({r["category"] for r in results}):
         group = [r for r in results if r["category"] == category]
         print(f"  {category:10} {sum(r['passed'] for r in group)}/{len(group)}")

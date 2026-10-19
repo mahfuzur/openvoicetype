@@ -1,13 +1,14 @@
 import Foundation
 
-/// The bundled whisper-server, whisper-cli and llama-server, run from a copy in Application Support.
+/// The bundled whisper-server, whisper-cli, llama-server and ovt-apple (Apple's engines, in builds made with the macOS 26
+/// SDK), run from a copy in Application Support.
 ///
 /// A downloaded DMG marks every file in it as quarantined. Opening the app with Open Anyway approves the app itself,
 /// but not the programs it launches: a quarantined helper stays blocked by Gatekeeper, so transcription would hang.
 /// The app can't clear the flag inside its own bundle (App Management protects signed apps), so it copies the helpers
 /// out: a file the app writes itself isn't quarantined, and the copy keeps its code signature. Only when they changed.
 enum BundledHelpers {
-    static let names = ["whisper-server", "whisper-cli", "llama-server"]
+    static let names = ["whisper-server", "whisper-cli", "llama-server", "ovt-apple"]
     private static let bundled = Bundle.main.bundleURL.appendingPathComponent("Contents/Helpers")
     private static let installed = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0]
         .appendingPathComponent("OpenVoiceType/Helpers")
@@ -18,10 +19,11 @@ enum BundledHelpers {
 
     private static func prepare() -> URL? {
         let fileManager = FileManager.default
-        guard fileManager.fileExists(atPath: bundled.appendingPathComponent(names[0]).path) else { return nil }
+        let present = names.filter { fileManager.fileExists(atPath: bundled.appendingPathComponent($0).path) }
+        guard !present.isEmpty else { return nil }
         do {
             try fileManager.createDirectory(at: installed, withIntermediateDirectories: true)
-            for name in names {
+            for name in present {
                 let source = bundled.appendingPathComponent(name)
                 let target = installed.appendingPathComponent(name)
                 guard !sameFile(source, target) else { continue }
@@ -38,6 +40,11 @@ enum BundledHelpers {
             AppLog.write("HELPERS couldn't copy (\(error.localizedDescription)); running them from the app bundle")
             return bundled
         }
+    }
+
+    /// Whether this build has the helper (ovt-apple is only in builds made with the macOS 26 SDK).
+    static func has(_ name: String) -> Bool {
+        directory.map { FileManager.default.isExecutableFile(atPath: $0.appendingPathComponent(name).path) } ?? false
     }
 
     /// Same size and contents; the helpers are a few MB, so comparing the bytes costs milliseconds.

@@ -77,8 +77,9 @@ description: Open-source dictation for macOS. Whisper transcribes on your Mac; t
       <article class="card"><h3>Knows the app</h3><p>Casual for chat, paragraphs for email, exact identifiers for code,
         lists for notes. Add names and terms to the dictionary.</p></article>
       <article class="card"><h3>Your choice of engine</h3><p>Your Claude Code (default), any OpenAI-compatible endpoint
-        (Ollama, LM Studio, OpenAI, Groq), or S1-mini by Superwhisper on your Mac, offline.</p></article>
-      <article class="card"><h3>Nothing lost</h3><p>Offline, rate-limited or signed out? S1-mini cleans up instead, and
+        (Ollama, LM Studio, OpenAI, Groq), or offline on your Mac: S1-mini by Superwhisper, or Apple Intelligence on macOS 26+.
+        Apple's on-device speech engine is an option there too.</p></article>
+      <article class="card"><h3>Nothing lost</h3><p>Offline, rate-limited or signed out? Apple Intelligence or S1-mini cleans up instead, and
         failing that you get Whisper's text. <kbd>⌃⌥Z</kbd> swaps the last paste between the two.</p></article>
     </div>
   </div>
@@ -121,6 +122,7 @@ description: Open-source dictation for macOS. Whisper transcribes on your Mac; t
         <tbody>
           <tr><td>Claude Haiku (default)</td><td>17/17 <span class="muted">(16/17 in some runs)</span></td><td>8/8</td><td>about 1.2 s pre-started, as in the app; 3.4 s with the CLI's startup</td></tr>
           <tr><td>S1-mini, on this Mac</td><td>8/17</td><td>7/8</td><td>0.7 s</td></tr>
+          <tr><td>Apple Intelligence, on this Mac (macOS 26+)</td><td>8/17</td><td>7/8</td><td>1.8 s</td></tr>
           <tr><td>Ollama llama3.2 3B, on this Mac</td><td>9/17</td><td>3/8</td><td>1.8 s</td></tr>
         </tbody>
       </table>
@@ -167,7 +169,7 @@ description: Open-source dictation for macOS. Whisper transcribes on your Mac; t
         <ul>
           <li>The transcript text, with the app's name, the mode and your dictionary terms</li>
           <li>Command Mode: the selected text and your instruction, only when you press its key</li>
-          <li>With S1-mini, or cleanup off, none of your words are sent</li>
+          <li>With S1-mini, Apple Intelligence, or cleanup off, none of your words are sent</li>
         </ul>
       </div>
       <div class="privacy-col privacy-never">

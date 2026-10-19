@@ -118,6 +118,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         observeSettings()
         claude.refresh()
         models.onInstalled = { [weak self] model in self?.modelInstalled(model) }
+        AppleEngines.shared.runner = { [weak self] args, onLine, completion in
+            guard let self else { return completion(-1) }
+            self.dictation.runLines(args, onLine: onLine, completion: completion)
+        }
+        AppleEngines.shared.refresh()
         refreshS1Status()
         updateS1Server()
         warmUpNewHelpers()
@@ -303,7 +308,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
             if dictation.job == .command {
                 overlay.show(.editing(dictation.commandPlan?.workingLabel ?? "Editing"))
             } else {
-                overlay.show(.polishing(offline: settings.usesS1))
+                overlay.show(.polishing(offline: settings.usesOnDeviceCleanup))
             }
         case .idle, .testingMic:
             break
@@ -398,7 +403,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
             + "cleaned up with \(Dictation.engineName(details.engine, settings: settings))."
         AppLog.write("TIMING stop→transcript=\(timing.transcribeMs)ms transcript→cleaned=\(timing.cleanupMs)ms "
             + "cleaned→pasted=\(total - timing.transcribeMs - timing.cleanupMs)ms total=\(total)ms "
-            + "prestarted=\(timing.prestarted) mode=\(result.context.mode.rawValue)")
+            + "prestarted=\(timing.prestarted) speech=\(timing.speechEngine) mode=\(result.context.mode.rawValue)")
         if check == .secure { play("Funk") }
         let notice = check != .same || guarded || problem != nil
         overlay.finish(check == .same && pasted && !notice ? .success(label) : .message(label, isError: false),
@@ -672,7 +677,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         case .polishing where dictation.job == .command:
             settings.commandEngine == "openai" ? "Editing with the API…" : "Editing with Claude…"
         case .polishing: settings.usesS1 ? "Polishing with S1-mini…" : settings.usesAPI ? "Polishing with the API…"
-            : "Polishing with Claude…"
+            : settings.usesApple ? "Polishing with Apple Intelligence…" : "Polishing with Claude…"
         }
         menu.addItem(disabled(status))
         if let release = updater.available {
@@ -738,6 +743,15 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
                           checked: settings.usesS1)
         s1Item.isEnabled = installed
         menu.addItem(s1Item)
+        if AppleEngines.isSupported {
+            let apple = AppleEngines.shared
+            apple.refresh() // for the next time the menu opens
+            let appleItem = item(apple.modelAvailable ? "Apple Intelligence (on this Mac)"
+                                 : "Apple Intelligence (\(apple.modelProblem ?? "unavailable"))",
+                                 #selector(selectApple), checked: settings.usesApple)
+            appleItem.isEnabled = apple.modelAvailable
+            menu.addItem(appleItem)
+        }
         let apiModel = settings.openaiModel.trimmingCharacters(in: .whitespaces)
         let apiItem = item(apiModel.isEmpty ? "API (set up in Settings)" : "API: \(apiModel)", #selector(selectAPI),
                            checked: settings.usesAPI)
@@ -748,6 +762,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         menu.autoenablesItems = false
 
         let current = !settings.refine ? "Off" : settings.cleanupEngine == "s1" ? "S1-mini"
+            : settings.cleanupEngine == "apple" ? "Apple Intelligence"
             : settings.cleanupEngine == "openai" ? "API" : "Claude \(settings.claudeModel.capitalized)"
         return submenu("Clean Up With: \(current)", menu)
     }
@@ -874,6 +889,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
 
     @objc private func selectS1() {
         settings.cleanupEngine = "s1"
+        settings.refine = true
+    }
+
+    @objc private func selectApple() {
+        settings.cleanupEngine = "apple"
         settings.refine = true
     }
 

@@ -86,6 +86,10 @@ scripts sign in.
 - **An OpenAI-compatible API (Settings → Cleanup):** Ollama or LM Studio on your Mac, or OpenAI, Groq, OpenRouter and
   others, with your own key (kept in your Keychain). That service's terms apply.
 - **S1-mini:** a small cleanup model that runs on your Mac. With it, nothing leaves your Mac at all.
+- **Apple Intelligence (macOS 26+):** Apple's on-device language model, through Apple's Foundation Models framework. Nothing
+  leaves your Mac. Apple's
+  [acceptable use requirements](https://developer.apple.com/apple-intelligence/acceptable-use-requirements-for-the-foundation-models-framework/)
+  apply. The app uses the framework directly, not Apple's `fm` command-line tool, whose license doesn't allow programmatic use.
 - **Cleanup off:** pastes Whisper's text as it is.
 - More providers (Codex with a ChatGPT plan first) are planned: see the [roadmap](ROADMAP.md) (M6). Gemini CLI no longer
   accepts personal Google accounts (since 2026-06-18), and its successor's terms forbid third-party tools, so Gemini will

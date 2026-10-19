@@ -209,7 +209,7 @@ struct OverlayView: View {
 }
 
 private struct PulsingDot: View {
-    @State private var pulsing = false
+    @StoredState private var pulsing = false
 
     var body: some View {
         ZStack {

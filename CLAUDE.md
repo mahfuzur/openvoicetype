@@ -13,8 +13,10 @@ See [docs/ROADMAP.md](docs/ROADMAP.md) (the phased roadmap, which is the source 
 ```
 hotkey -> pin the paste target (app, window, title; refuse password fields) and the mode
        -> record (AVAudioEngine in the app, or sox/rec from the CLI; 16 kHz mono WAV)
-       -> transcribe (whisper-server kept loaded, whisper-cli fallback; ggml-large-v3-turbo, fully local)
-       -> clean up (claude -p, subscription auth; or an OpenAI-compatible endpoint; offline or on failure: S1-mini)
+       -> transcribe (whisper-server kept loaded, whisper-cli fallback; ggml-large-v3-turbo, fully local;
+                      or Apple's SpeechAnalyzer on macOS 26+, fed live)
+       -> clean up (claude -p, subscription auth; or an OpenAI-compatible endpoint; or Apple Intelligence;
+                    offline or on failure: Apple Intelligence or S1-mini)
        -> meaning guard (numbers and negations kept, else Whisper's text) -> post-process (dictionary, output filter)
        -> paste if the target is unchanged (CGEvent Cmd+V, clipboard restored after the app reads it), else copy
 ```
@@ -22,7 +24,8 @@ hotkey -> pin the paste target (app, window, title; refuse password fields) and 
 ## Environment
 
 - macOS 13.3+ on Apple Silicon. The app builds with SwiftPM and **Command Line Tools only** (Xcode isn't required).
-  `scripts/build-app.sh` assembles the `.app` bundle by hand. The code must stay compatible with Swift 5.9.
+  `scripts/build-app.sh` assembles the `.app` bundle by hand. The code must stay compatible with Swift 5.9 (except
+  `app/AppleHelper`, which needs Swift 6.2 and the macOS 26 SDK; it's skipped with older tools).
 - The app bundles its own static `whisper-server`, `whisper-cli` and `llama-server` (`scripts/build-deps.sh`, needs `cmake`),
   so it runs on a Mac without Homebrew. The CLI (`dictate start`) still uses Homebrew's `sox`/`rec` and whisper.cpp.
 - The `claude` CLI must be on `PATH` and logged in.
@@ -300,6 +303,35 @@ env -u ANTHROPIC_API_KEY -u ANTHROPIC_AUTH_TOKEN MAX_THINKING_TOKENS=0 CLAUDE_CO
   instruction is logged only with `LOG_TEXT=on`.
 - **Eval.** `evals/run.py --command` runs the 20 cases in `evals/command_cases.json`. Check types include `equals`,
   `max_chars` and `max_sentences`. `evals/run.py --cold` times a plain one-shot `claude -p`, for comparison.
+
+## Apple on-device engines (M5.6, see docs/plans/M5.6-apple-on-device.md)
+
+- **`ovt-apple`** (`app/AppleHelper/`, its own SwiftPM package: tools 6.2, macOS 26, Swift 5 mode) runs SpeechAnalyzer and
+  Apple's Foundation Models. `build-app.sh` builds it only with Swift ≥ 6.2 and SDK ≥ 26 and bundles it in
+  `Contents/Helpers`; the main app package stays Swift 5.9 and never imports the new frameworks. `AppleEngines.isSupported`
+  (macOS 26 + helper present) gates every Apple option in the UI.
+- Commands: `status` (JSON), `speech-install` (progress lines), `transcribe <wav>` / `--pcm` (live, stdin 16 kHz Int16),
+  `cleanup --instructions-file F` (prewarms, reads the user message on stdin; failures on stderr: `unavailable <reason>`,
+  `refusal`, `guardrail`, `context`, `rate-limited`, `error …`, exit 2).
+- `dictate.sh`: `SPEECH_ENGINE=whisper|apple` (`transcribe` falls back to Whisper), `transcribe-stream` (the app pipes the
+  recording while you speak; exit 2 = use Whisper on the WAV), `CLEANUP=apple` (skips code mode), `FALLBACK_ENGINE=auto|apple|s1`
+  for the offline fallback (exit 4, `engine` in the result file says which). `apple_status` is cached for a minute in
+  `$STATE_DIR/apple-status`. `APPLE_HELPER=off` disables it (the tests do; `fake-ovt-apple` stands in).
+- **No Speech Recognition permission** is needed (it only covers `SFSpeechRecognizer`). The analyzer doesn't convert audio:
+  buffers must be in `bestAvailableAudioFormat`, or the text is silently empty.
+- Cleanup uses `.permissiveContentTransformations` guardrails and greedy sampling. A refusal can come back as text; the helper
+  treats an answer that opens like one ("I'm sorry…") as `refusal`. `prompts/apple.md`, if present, is appended for this
+  model only.
+- **Never call Apple's `/usr/bin/fm` CLI**: its license forbids programmatic use. `@Generable` needs Xcode's macro plugin:
+  don't use it (CLT only).
+- **Write `@StoredState`, never `@State`** in the app: Swift 6.4 makes `@State` a macro whose plugin ships only with Xcode,
+  so CLT builds fail (`StoredState.swift` is a typealias for `SwiftUI.State`).
+- Apple's model gets `apple_message()`: context and vocabulary, then `prompts/apple.md` (a reminder), then
+  `Transcript: … / Output:` like the prompt's examples. With Claude's `<transcript>` message it wrote the haikus and emails
+  it was dictated. Eval 15/25 (S1-mini 15/25), 1.8 s. Apple speech: 0.5 s per file, 79 ms after stop when live, but worse on
+  technical terms than Whisper, so Whisper stays the default.
+- **Gotcha:** installing the Command Line Tools over an old copy (no package receipt) left stale `PackageDescription`
+  interfaces and every manifest failed to link. Remove `/Library/Developer/CommandLineTools` before reinstalling.
 
 ## Commands
 

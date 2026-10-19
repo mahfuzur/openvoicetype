@@ -77,11 +77,11 @@ final class SettingsTabViewController: NSTabViewController {
 struct GeneralPane: View {
     let actions: AppActions
     @ObservedObject private var settings = AppSettings.shared
-    @State private var devices = AudioDevices.inputDevices()
-    @State private var micAllowed = AVCaptureDevice.authorizationStatus(for: .audio) == .authorized
-    @State private var axAllowed = AXIsProcessTrusted()
-    @State private var launchAtLogin = SMAppService.mainApp.status == .enabled
-    @State private var loginError: String?
+    @StoredState private var devices = AudioDevices.inputDevices()
+    @StoredState private var micAllowed = AVCaptureDevice.authorizationStatus(for: .audio) == .authorized
+    @StoredState private var axAllowed = AXIsProcessTrusted()
+    @StoredState private var launchAtLogin = SMAppService.mainApp.status == .enabled
+    @StoredState private var loginError: String?
     private let poll = Timer.publish(every: 1.5, on: .main, in: .common).autoconnect()
 
     var body: some View {
@@ -188,15 +188,32 @@ struct GeneralPane: View {
 
 struct SpeechPane: View {
     @ObservedObject private var settings = AppSettings.shared
+    @ObservedObject private var apple = AppleEngines.shared
 
     var body: some View {
         Form {
+            if AppleEngines.isSupported {
+                Section {
+                    Picker("Engine", selection: $settings.speechEngine) {
+                        Text("Whisper, on this Mac").tag("whisper")
+                        Text("Apple, on this Mac").tag("apple")
+                    }
+                    .pickerStyle(.radioGroup)
+                    AppleSpeechModelRow()
+                } header: {
+                    Text("Speech engine")
+                } footer: {
+                    Text("Both run on this Mac: your audio never leaves it. Apple's engine transcribes while you speak and uses "
+                        + "a model macOS downloads and manages. If it's unavailable, Whisper is used.")
+                        .font(.caption).foregroundColor(.secondary)
+                }
+            }
             Section {
                 ForEach(ModelCatalog.whisper) { model in
                     ModelRow(model: model, selected: $settings.whisperModel)
                 }
             } header: {
-                Text("Speech model")
+                Text(AppleEngines.isSupported ? "Whisper model" : "Speech model")
             } footer: {
                 HStack {
                     Text("Whisper runs on this Mac: your audio never leaves it. English only for now.")
@@ -215,6 +232,41 @@ struct SpeechPane: View {
             }
         }
         .formStyle(.grouped)
+        .onAppear { apple.refresh() }
+    }
+}
+
+/// Apple's speech model for the dictation language: installed, or Download with progress.
+struct AppleSpeechModelRow: View {
+    @ObservedObject private var apple = AppleEngines.shared
+
+    var body: some View {
+        HStack {
+            if let progress = apple.downloadProgress {
+                StatusIcon(kind: .working)
+                Text("Apple speech model: downloading \(Int(progress * 100))%")
+            } else if apple.speechReady {
+                StatusIcon(kind: .ok)
+                Text("Apple speech model: installed")
+            } else if apple.status == nil {
+                StatusIcon(kind: .working)
+                Text("Checking Apple's speech engine…")
+            } else if !apple.speechAvailable {
+                StatusIcon(kind: .warning)
+                Text("Apple's speech engine isn't available for this language")
+            } else if apple.speechAssets == "downloading" {
+                StatusIcon(kind: .working)
+                Text("Apple speech model: macOS is downloading it")
+            } else {
+                StatusIcon(kind: .missing)
+                Text("Apple speech model: not downloaded")
+                Spacer()
+                Button("Download") { apple.downloadSpeechModel() }
+            }
+        }
+        if let error = apple.downloadError {
+            Text(error).font(.caption).foregroundColor(.red)
+        }
     }
 }
 
@@ -224,8 +276,9 @@ struct CleanupPane: View {
     let actions: AppActions
     @ObservedObject private var settings = AppSettings.shared
     @ObservedObject private var models = ModelManager.shared
-    @State private var testResult: (text: String, engine: String, seconds: Double)?
-    @State private var testing = false
+    @ObservedObject private var apple = AppleEngines.shared
+    @StoredState private var testResult: (text: String, engine: String, seconds: Double)?
+    @StoredState private var testing = false
     private static let sample = "um so i think we should uh move the team meeting to thursday at 3 pm "
         + "and can you also invite sarah from the design team"
 
@@ -238,6 +291,9 @@ struct CleanupPane: View {
                     Text("Claude (your Claude Code)").tag("claude")
                     Text("An OpenAI-compatible API (Ollama, LM Studio, OpenAI, Groq…)").tag("openai")
                     Text("S1-mini (on this Mac, offline)").tag("s1")
+                    if AppleEngines.isSupported {
+                        Text("Apple Intelligence (on this Mac, offline)").tag("apple")
+                    }
                 }
                 .pickerStyle(.radioGroup)
                 .disabled(!settings.refine)
@@ -274,13 +330,28 @@ struct CleanupPane: View {
                         .buttonStyle(.link).font(.caption)
                 }
             }
+            if AppleEngines.isSupported {
+                Section("Apple Intelligence (offline)") {
+                    HStack {
+                        StatusIcon(kind: apple.modelAvailable ? .ok : apple.status == nil ? .working : .warning)
+                        Text(apple.modelProblem ?? "Ready: Apple's on-device model")
+                    }
+                    Text("Runs on this Mac; the transcript stays here. It leaves Code mode (editors, terminals) as raw text.")
+                        .font(.caption).foregroundColor(.secondary)
+                }
+            }
             Section("S1-mini (offline)") {
                 // Not deletable while it's the cleanup engine: every dictation would lose its cleanup.
                 ModelRow(model: ModelCatalog.s1Mini, allowDelete: !settings.usesS1)
-                Toggle("Use S1-mini when Claude or the API is unavailable (offline, signed out, an error)",
+                Toggle(AppleEngines.isSupported
+                       ? "Clean up on this Mac when Claude or the API is unavailable (offline, signed out, an error)"
+                       : "Use S1-mini when Claude or the API is unavailable (offline, signed out, an error)",
                        isOn: $settings.s1Fallback)
-                    .disabled(!ModelCatalog.s1Mini.isInstalled || settings.cleanupEngine == "s1")
-                Text("S1-mini by Superwhisper. English only; it leaves Code mode (editors, terminals) as raw text.")
+                    .disabled((!ModelCatalog.s1Mini.isInstalled && !apple.modelAvailable) || settings.usesOnDeviceCleanup)
+                Text(AppleEngines.isSupported
+                     ? "Apple Intelligence steps in when it's on, otherwise S1-mini. S1-mini by Superwhisper is English only; "
+                         + "both leave Code mode (editors, terminals) as raw text."
+                     : "S1-mini by Superwhisper. English only; it leaves Code mode (editors, terminals) as raw text.")
                     .font(.caption).foregroundColor(.secondary)
             }
             Section("Test") {
@@ -298,6 +369,7 @@ struct CleanupPane: View {
             }
         }
         .formStyle(.grouped)
+        .onAppear { apple.refresh() }
     }
 
     private func runTest() {
@@ -312,11 +384,11 @@ struct CleanupPane: View {
 /// The OpenAI-compatible endpoint: a service or your own base URL, the model, and the key (kept in the Keychain, per host).
 struct APIEndpointSection: View {
     @ObservedObject private var settings = AppSettings.shared
-    @State private var key = ""
-    @State private var keyStatus: String?
-    @State private var models: [String] = []
-    @State private var loadStatus: String?
-    @State private var loading = false
+    @StoredState private var key = ""
+    @StoredState private var keyStatus: String?
+    @StoredState private var models: [String] = []
+    @StoredState private var loadStatus: String?
+    @StoredState private var loading = false
 
     static let presets: [(name: String, url: String)] = [
         ("Ollama (on this Mac)", "http://localhost:11434/v1"),
@@ -418,9 +490,9 @@ struct APIEndpointSection: View {
 
 struct DictionaryPane: View {
     @StateObject private var dictionary = DictionaryFile()
-    @State private var newTerm = ""
-    @State private var newHeard = ""
-    @State private var newWanted = ""
+    @StoredState private var newTerm = ""
+    @StoredState private var newHeard = ""
+    @StoredState private var newWanted = ""
 
     var body: some View {
         Form {
@@ -591,7 +663,8 @@ struct AboutPane: View {
             }
             Section("Credits") {
                 Text("Speech recognition: whisper.cpp (MIT). Offline cleanup: S1-mini by Superwhisper, run with llama.cpp (MIT). "
-                    + "Cleanup with Claude uses your own Claude Code CLI.")
+                    + "Cleanup with Claude uses your own Claude Code CLI."
+                    + (AppleEngines.isSupported ? " Apple's engines: the Speech and Foundation Models frameworks, on this Mac." : ""))
                     .font(.caption).fixedSize(horizontal: false, vertical: true)
                 HStack {
                     Button("Third-Party Licenses") {

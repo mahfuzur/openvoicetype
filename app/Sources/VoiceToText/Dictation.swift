@@ -4,7 +4,8 @@ import Foundation
 /// dictate.sh in two stages, `transcribe <wav>` and `refine` (stdin), so the UI can show each stage.
 ///
 /// Speed (M3): when recording starts, `refine` is already launched (it starts Claude, then waits for the transcript)
-/// and `whisper-server` is loaded, so neither startup cost is paid after you stop speaking.
+/// and `whisper-server` is loaded, so neither startup cost is paid after you stop speaking. With Apple's speech engine
+/// (M5.6) `transcribe-stream` is launched instead, and the recording is fed to it while you speak.
 ///
 /// Where the text goes is decided when recording starts (v0.3.0): the frontmost app and window (`PasteTarget`), and the
 /// mode for that app. The app delegate checks the target again before pasting.
@@ -20,13 +21,15 @@ final class Dictation {
         var cleanupMs = 0
         /// The transcript went to a `refine` started when recording began.
         var prestarted = false
+        /// The speech engine: whisper, apple (live), or file (Apple's selected; `transcribe` chose for the WAV).
+        var speechEngine = "whisper"
     }
 
     /// What `refine` reported (its VTT_RESULT_FILE): the engine that cleaned up, why the online engine failed, and the
     /// meaning guard's reason with the cleanup it turned down.
     struct CleanupDetails: Decodable {
         var status = ""
-        /// claude, openai, s1 or none.
+        /// claude, openai, s1, apple or none.
         var engine = ""
         /// limit, auth, auth-mismatch, offline, timeout, config or error; empty when nothing failed.
         var error = ""
@@ -119,6 +122,8 @@ final class Dictation {
     private var micTestPeak: Float = 0
     /// `refine` started when recording started, waiting for the transcript on stdin.
     private var prestartedRefine: ScriptRun?
+    /// Apple's speech engine, live: `transcribe-stream`, fed the recording while you speak (nil with Whisper).
+    private var speechStream: ScriptRun?
     /// Where the text goes, fixed when recording starts.
     private var startContext: DictationContext?
     private var startTarget: PasteTarget?
@@ -215,49 +220,78 @@ final class Dictation {
         let target = startTarget ?? PasteTarget.capture()
         var timing = Timing(stoppedAt: Date())
         state = .transcribing
-        run(["transcribe", wav.path], timeout: 120) { [weak self] status, output, _ in
-            guard let self else { return }
-            try? FileManager.default.removeItem(at: wav)
-            timing.transcribeMs = Self.milliseconds(since: timing.stoppedAt)
-            let raw = output.trimmingCharacters(in: .whitespacesAndNewlines)
-            guard status == 0 else { self.dropPrestart(); return self.finish(.failed("Transcription failed")) }
-            guard !raw.isEmpty else { self.dropPrestart(); return self.finish(.noSpeech) }
-            if self.job == .command { return self.runCommand(instruction: raw, context: context, timing: timing) }
+        recorder.onPCM = nil
+        if let stream = speechStream {
+            // Apple's engine has heard everything already: closing its input finalizes the text (about 0.1 s).
+            speechStream = nil
+            timing.speechEngine = "apple"
+            stream.finish(input: nil, timeout: 30) { [weak self] status, output, _ in
+                guard let self else { return }
+                if status == 0 {
+                    return self.transcribed(status: status, output: output, wav: wav, context: context, target: target,
+                                            timing: timing)
+                }
+                AppLog.write("APPLE speech failed (exit \(status)), using Whisper")
+                timing.speechEngine = "whisper"
+                self.transcribeFile(wav, engine: "whisper", context: context, target: target, timing: timing)
+            }
+        } else {
+            timing.speechEngine = settings.speechEngine == "apple" ? "file" : "whisper"
+            transcribeFile(wav, engine: settings.speechEngine, context: context, target: target, timing: timing)
+        }
+    }
 
-            // Always run `refine`: with cleanup off or in Raw mode it skips the model but still applies
-            // the dictionary replacements and output filter. S1-mini has no code style, so it skips code mode.
-            let usesCleanup = self.settings.refine && context.mode != .raw
-                && !(self.settings.cleanupEngine == "s1" && context.mode == .code)
-            if usesCleanup { self.state = .polishing }
+    /// `dictate.sh transcribe <wav>`, with the given speech engine (Apple's falls back to Whisper in the script).
+    private func transcribeFile(_ wav: URL, engine: String, context: DictationContext, target: PasteTarget,
+                                timing: Timing) {
+        run(["transcribe", wav.path], extraEnv: ["VTT_SPEECH_ENGINE": engine], timeout: 120) { [weak self] status, output, _ in
+            self?.transcribed(status: status, output: output, wav: wav, context: context, target: target, timing: timing)
+        }
+    }
 
-            // The `refine` started with recording was started for this context.
-            let refineRun: ScriptRun?
-            if let prestarted = self.prestartedRefine {
-                self.prestartedRefine = nil
-                refineRun = prestarted
-                timing.prestarted = true
-            } else {
-                refineRun = self.launch(["refine"], extraEnv: Self.contextEnv(context))
-            }
-            let cleanupStarted = Date()
-            guard let refineRun else {
-                return self.finish(.text(Result(text: raw, raw: raw, cleanupFailed: usesCleanup, offlineFallback: false,
-                                                details: CleanupDetails(), context: context, target: target,
-                                                timing: timing)))
-            }
-            // A stuck CLI must not hold the dictation: after the script's own limits (Claude 15 s, S1-mini 10 s), stop it
-            // and paste Whisper's text.
-            refineRun.finish(input: raw, timeout: 45) { status, output, details in
-                timing.cleanupMs = Self.milliseconds(since: cleanupStarted)
-                let cleaned = output.trimmingCharacters(in: .whitespacesAndNewlines)
-                // Exit 4: the online engine was unavailable and S1-mini cleaned it up. Exit 3: raw text.
-                // Exit 5: the meaning guard pasted Whisper's text (the reason is in `details`).
-                let offlineFallback = usesCleanup && status == 4 && !cleaned.isEmpty
-                let failed = usesCleanup && !offlineFallback && status != 5 && (status != 0 || cleaned.isEmpty)
-                self.finish(.text(Result(text: cleaned.isEmpty ? raw : cleaned, raw: raw, cleanupFailed: failed,
-                                         offlineFallback: offlineFallback, details: details ?? CleanupDetails(),
-                                         context: context, target: target, timing: timing)))
-            }
+    /// The transcript is in (empty = no speech): runs the cleanup, or the command.
+    private func transcribed(status: Int32, output: String, wav: URL, context: DictationContext, target: PasteTarget,
+                             timing startTiming: Timing) {
+        var timing = startTiming
+        try? FileManager.default.removeItem(at: wav)
+        timing.transcribeMs = Self.milliseconds(since: timing.stoppedAt)
+        let raw = output.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard status == 0 else { dropPrestart(); return finish(.failed("Transcription failed")) }
+        guard !raw.isEmpty else { dropPrestart(); return finish(.noSpeech) }
+        if job == .command { return runCommand(instruction: raw, context: context, timing: timing) }
+
+        // Always run `refine`: with cleanup off or in Raw mode it skips the model but still applies
+        // the dictionary replacements and output filter. The on-device engines (S1-mini, Apple's) skip code mode.
+        let usesCleanup = settings.refine && context.mode != .raw
+            && !(settings.usesOnDeviceCleanup && context.mode == .code)
+        if usesCleanup { state = .polishing }
+
+        // The `refine` started with recording was started for this context.
+        let refineRun: ScriptRun?
+        if let prestarted = prestartedRefine {
+            prestartedRefine = nil
+            refineRun = prestarted
+            timing.prestarted = true
+        } else {
+            refineRun = launch(["refine"], extraEnv: Self.contextEnv(context))
+        }
+        let cleanupStarted = Date()
+        guard let refineRun else {
+            return finish(.text(Result(text: raw, raw: raw, cleanupFailed: usesCleanup, offlineFallback: false,
+                                       details: CleanupDetails(), context: context, target: target, timing: timing)))
+        }
+        // A stuck CLI must not hold the dictation: after the script's own limits (Claude 15 s, S1-mini 10 s), stop it
+        // and paste Whisper's text.
+        refineRun.finish(input: raw, timeout: 45) { [self] status, output, details in
+            timing.cleanupMs = Self.milliseconds(since: cleanupStarted)
+            let cleaned = output.trimmingCharacters(in: .whitespacesAndNewlines)
+            // Exit 4: the online engine was unavailable and an on-device engine cleaned it up. Exit 3: raw text.
+            // Exit 5: the meaning guard pasted Whisper's text (the reason is in `details`).
+            let offlineFallback = usesCleanup && status == 4 && !cleaned.isEmpty
+            let failed = usesCleanup && !offlineFallback && status != 5 && (status != 0 || cleaned.isEmpty)
+            finish(.text(Result(text: cleaned.isEmpty ? raw : cleaned, raw: raw, cleanupFailed: failed,
+                                offlineFallback: offlineFallback, details: details ?? CleanupDetails(),
+                                context: context, target: target, timing: timing)))
         }
     }
 
@@ -288,7 +322,8 @@ final class Dictation {
             let engine: String = switch status {
             case 0 where !self.settings.refine: "No cleanup (turned off)"
             case 0: Self.engineName(details?.engine ?? "", settings: self.settings)
-            case 4: "S1-mini" + (problem.map { " (\($0))" } ?? " (the online engine was unavailable)")
+            case 4: Self.engineName(details?.engine ?? "s1", settings: self.settings)
+                + (problem.map { " (\($0))" } ?? " (the online engine was unavailable)")
             case 5: "Whisper's text: the cleanup dropped \(details?.guardReason ?? "something")"
             default: "Raw text" + (problem.map { " (\($0))" } ?? " (cleanup failed; see the log)")
             }
@@ -302,6 +337,7 @@ final class Dictation {
         case "claude": "Claude \(settings.claudeModel.capitalized)"
         case "openai": settings.openaiModel.isEmpty ? "the API" : settings.openaiModel
         case "s1": "S1-mini"
+        case "apple": "Apple Intelligence"
         default: "no cleanup"
         }
     }
@@ -309,6 +345,15 @@ final class Dictation {
     /// Why the online engine failed, for the overlay and the test result; nil when nothing failed or it was offline.
     /// `engine` is the online engine that ran: the cleanup engine, or Command Mode's.
     static func problemDescription(_ details: CleanupDetails, engine: String = AppSettings.shared.cleanupEngine) -> String? {
+        if engine == "apple" {
+            switch details.error {
+            case "": return nil
+            case "config": return AppleEngines.shared.modelProblem ?? "Apple Intelligence isn't available"
+            case "timeout": return "Apple Intelligence timed out"
+            case "limit": return "Apple Intelligence is busy; try again"
+            default: return "Apple Intelligence couldn't clean it up"
+            }
+        }
         let claude = engine != "openai"
         switch details.error {
         case "limit":
@@ -319,6 +364,37 @@ final class Dictation {
         case "config": return "set up the API in Settings"
         case "timeout": return claude ? "Claude timed out" : "the API timed out"
         default: return nil
+        }
+    }
+
+    /// Runs `dictate.sh <args>` and calls `onLine` on main for each line it prints as it prints it (a download's
+    /// progress), then `completion` with the exit status.
+    func runLines(_ args: [String], onLine: @escaping (String) -> Void, completion: @escaping (Int32) -> Void) {
+        let process = Process()
+        let output = Pipe()
+        process.executableURL = URL(fileURLWithPath: "/bin/bash")
+        process.arguments = [scriptURL.path] + args
+        process.environment = environment()
+        process.standardInput = FileHandle.nullDevice
+        process.standardOutput = output
+        process.standardError = FileHandle.nullDevice
+        do { try process.run() } catch { return completion(-1) }
+        DispatchQueue.global(qos: .utility).async {
+            var pending = Data()
+            while case let data = output.fileHandleForReading.availableData, !data.isEmpty {
+                pending.append(data)
+                while let newline = pending.firstIndex(of: UInt8(ascii: "\n")) {
+                    let line = String(decoding: pending[pending.startIndex..<newline], as: UTF8.self)
+                    pending.removeSubrange(pending.startIndex...newline)
+                    DispatchQueue.main.async { onLine(line) }
+                }
+            }
+            if !pending.isEmpty {
+                let line = String(decoding: pending, as: UTF8.self)
+                DispatchQueue.main.async { onLine(line) }
+            }
+            process.waitUntilExit()
+            DispatchQueue.main.async { completion(process.terminationStatus) }
         }
     }
 
@@ -383,11 +459,18 @@ final class Dictation {
         }
     }
 
-    /// Starts the slow parts while you speak: loads whisper-server, and launches `refine` (or `command`), which starts
-    /// Claude and then waits for the transcript. It uses the context fixed when recording started.
+    /// Starts the slow parts while you speak: loads whisper-server (or starts Apple's engine, fed the recording live), and
+    /// launches `refine` (or `command`), which starts Claude and then waits for the transcript. It uses the context fixed
+    /// when recording started.
     private func prestart() {
-        server("whisper-server", ["start"])
         dropPrestart()
+        if settings.speechEngine == "apple", AppleEngines.shared.speechReady,
+           let stream = launch(["transcribe-stream"]) {
+            speechStream = stream
+            recorder.onPCM = { [weak stream] data in stream?.append(data) }
+        } else {
+            server("whisper-server", ["start"])
+        }
         guard let context = startContext else { return }
         if job == .command {
             prestartedRefine = launch(["command"], extraEnv: Self.contextEnv(context))
@@ -399,9 +482,13 @@ final class Dictation {
     }
 
     /// Ends a waiting `refine` without a transcript: the script sees empty input and exits, and so does its Claude.
+    /// Stops Apple's live engine too, without its text.
     private func dropPrestart() {
         prestartedRefine?.finish(input: nil)
         prestartedRefine = nil
+        recorder.onPCM = nil
+        speechStream?.terminate()
+        speechStream = nil
     }
 
     private func finish(_ outcome: Outcome) {
@@ -426,6 +513,7 @@ final class Dictation {
         env["VTT_OPENAI_BASE_URL"] = settings.openaiBaseURL.trimmingCharacters(in: .whitespaces)
         env["VTT_OPENAI_MODEL"] = settings.openaiModel.trimmingCharacters(in: .whitespaces)
         env["VTT_COMMAND_ENGINE"] = settings.commandEngine
+        env["VTT_SPEECH_ENGINE"] = settings.speechEngine
         if let helpers = BundledHelpers.directory { env["VTT_BIN_DIR"] = helpers.path }
         if let model = ModelCatalog.whisperModel(named: settings.whisperModel), model.isInstalled {
             env["VTT_WHISPER_MODEL"] = model.path.path
@@ -494,6 +582,8 @@ final class ScriptRun {
     private let stdin = Pipe()
     private let stdout = Pipe()
     private var finished = false
+    /// `append` writes in order on this queue; `finish` waits for it before closing stdin.
+    private let writer = DispatchQueue(label: "ScriptRun.stdin")
     /// Deleted when the process exits (the result file, a key file).
     private let files: [URL]
     private let resultURL: URL?
@@ -529,7 +619,9 @@ final class ScriptRun {
                 process.terminate()
             }
         }
+        let writer = self.writer
         DispatchQueue.global(qos: .userInitiated).async {
+            writer.sync {} // whatever `append` queued goes first
             // `write(contentsOf:)` throws instead of raising an uncatchable exception if the script already exited.
             if let input { try? stdin.fileHandleForWriting.write(contentsOf: Data(input.utf8)) }
             try? stdin.fileHandleForWriting.close()
@@ -543,8 +635,16 @@ final class ScriptRun {
         }
     }
 
+    /// Writes to stdin now, before `finish` (Apple's engine gets the recording while you speak). Never blocks the caller.
+    func append(_ data: Data) {
+        guard !finished else { return }
+        writer.async { [stdin] in try? stdin.fileHandleForWriting.write(contentsOf: data) }
+    }
+
     func terminate() {
         finished = true
+        // Closing stdin too: a helper the script started reads it to the end, and would otherwise wait forever.
+        writer.async { [stdin] in try? stdin.fileHandleForWriting.close() }
         if process.isRunning { process.terminate() }
         files.forEach { try? FileManager.default.removeItem(at: $0) }
     }

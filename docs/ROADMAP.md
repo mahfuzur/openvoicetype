@@ -50,7 +50,8 @@ post-processing, rich paste, and the eval harness (`evals/`). Eval: 30% → **10
 | M4 | Settings window, first-run setup and DMG | 7–9 days | ✅ Released as v0.1.0 (2026-09-24); a test on a second Mac is still to do ([plan](plans/M4-app-and-install.md)) | Anyone can install it from a DMG with no Homebrew or Terminal, and set it up in a real window |
 | M5 | Open-source release | 2–3 days | ✅ Released as v0.2.0 (2026-09-25): renamed to **OpenVoiceType**, terms check, community files, repo renamed. The demo GIF is deferred ([plan](plans/M5-open-source-release.md)) | Name, terms check, demo, the first tagged DMG |
 | M5.4 | Trust release | 7–9 days | ✅ Released as v0.4.0 (2026-09-25) ([plan](plans/M5.4-trust-release.md)) | From an outside review: private logs, safe pasting, a guard for changed numbers and "not", an isolated Claude call with clear errors, and an OpenAI-compatible provider so cleanup doesn't depend on Claude alone |
-| M5.5 | Command Mode, on-screen context and snippets | 11–14 days | ◐ Command Mode released as v0.5.0 (2026-09-25); context and snippets next, in v0.6.0 ([plan](plans/M5.5-command-mode-context-snippets.md), [research](research/2026-09-25-command-mode-and-cli.md)) | Closes the biggest gap: editing the selection by voice. v0.5.0 = Command Mode; v0.6.0 = context, snippets and Apple's on-device speech engine (macOS 26) |
+| M5.5 | Command Mode, on-screen context and snippets | 11–14 days | ◐ Command Mode released as v0.5.0 (2026-09-25); context and snippets next, in v0.6.0 ([plan](plans/M5.5-command-mode-context-snippets.md), [research](research/2026-09-25-command-mode-and-cli.md)) | Closes the biggest gap: editing the selection by voice. v0.5.0 = Command Mode; then context and snippets (the Apple speech engine moved to M5.6) |
+| M5.6 | Apple on-device engines | 6–8 days | ◐ Planned (2026-10-18) ([plan](plans/M5.6-apple-on-device.md)) | On macOS 26+, Apple's SpeechAnalyzer as a speech engine and Apple's on-device language model as a cleanup engine and offline fallback: the whole pipeline on the Mac with nothing to download |
 | M6 | More providers | 3–4 days | Not started | Turns it into a platform: pick Codex, Gemini, Ollama or an API as well as Claude and S1-mini |
 | M7 | Linux app | 35–50 days | ◐ P0 started (2026-09-30) ([plan](plans/M7-linux.md)) | Requested in [#14](https://github.com/mahfuzur/openvoicetype/issues/14): a native Rust + GTK4 app with full parity, sharing `dictate.sh`, the prompts and the evals |
 
@@ -304,11 +305,23 @@ Installed CLIs are detected automatically by resolving the user's login-shell `P
   No screenshots.
 - **Snippets:** a spoken trigger inserts saved text, alone (no Claude call) or inside a sentence.
 - **Small additions:** website modes from the browser's window title, smart spacing, and "send it" in chat apps.
-- **Apple speech engine (macOS 26):** Apple's on-device SpeechAnalyzer as an alternative to Whisper, for Macs with little memory.
-  Audio still stays on the Mac. Built behind a compiler check, so older SDKs keep building. Claude can't do speech
-  recognition (it takes no audio).
+- **Apple speech engine (macOS 26):** moved to [M5.6](#m56-apple-on-device-engines) on 2026-10-18, together with Apple's
+  on-device language model.
 - **Not planned:** a custom speech recognizer or fine-tuned LLM (these need GPU servers), learning a personal writing style,
   and a dictionary that learns from your edits (reading text fields back after pasting is fragile).
+
+## M5.6: Apple on-device engines
+
+> **Detailed plan and task tracking:** [plans/M5.6-apple-on-device.md](plans/M5.6-apple-on-device.md).
+
+- **Speech:** Apple's SpeechAnalyzer (macOS 26+) as an engine next to Whisper, fed live while you speak, so the text is ready
+  about 0.1 s after you stop. macOS downloads and manages the language model; it needs no Speech Recognition permission.
+  It becomes the default for new installs only if the e2e eval shows it's as accurate as Whisper.
+- **Cleanup:** Apple's on-device language model (Foundation Models, Apple Intelligence) as a cleanup choice, and the offline
+  fallback in place of S1-mini where it's available. Same prompt, same meaning guard; code mode skips it.
+- **How:** one small Swift helper, `ovt-apple`, built with the macOS 26 SDK and bundled like `whisper-server`. The app and
+  `dictate.sh` call it, so the CLI and the evals use it too, and the main app still builds with older toolchains.
+- Audio and text stay on the Mac. Apple's `fm` CLI isn't used (its license forbids programmatic use).
 
 ## M7: Linux app
 

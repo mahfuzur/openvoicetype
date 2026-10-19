@@ -1,5 +1,6 @@
 #!/usr/bin/env bash
-# Local dictation: record -> whisper.cpp -> cleanup (claude CLI, or S1-mini offline) -> paste into the focused app.
+# Local dictation: record -> whisper.cpp (or Apple's SpeechAnalyzer) -> cleanup (claude CLI, or on the Mac: Apple's
+# on-device model or S1-mini) -> paste into the focused app.
 #
 # Usage: dictate.sh [toggle|start|stop|cancel|file <wav>|selftest|transcribe <wav>|refine|s1-server|whisper-server <cmd>]
 #   toggle      (default) start recording, or stop and process if already recording
@@ -9,13 +10,16 @@
 #   file        run the pipeline on an existing WAV and print the result (no paste)
 #   selftest    synthesize speech (`say` on macOS, espeak-ng on Linux), run the pipeline, print timings (no paste)
 #   transcribe  print the raw transcript of a WAV (empty if no speech)        [used by the app]
+#   transcribe-stream  Apple's engine, live: transcribe the 16 kHz mono 16-bit PCM on stdin; exit 2 = unavailable or
+#               failed (the app then uses Whisper on the WAV)                 [used by the app]
 #   refine      clean up the transcript on stdin and print it; exit 3 = fell back to raw,
-#               exit 4 = the online engine was unavailable and S1-mini cleaned it up,
+#               exit 4 = the online engine was unavailable and an on-device engine (Apple or S1-mini) cleaned it up,
 #               exit 5 = the meaning guard pasted Whisper's text; details in $VTT_RESULT_FILE (JSON)  [used by the app]
 #   command     Command Mode: do the spoken instruction on stdin with the text in $VTT_COMMAND_FILE (JSON) and print
 #               the new text; exit 3 = nothing to paste (the reason is in $VTT_RESULT_FILE)       [used by the app]
 #   s1-server       start [--keep] | release | stop | status: the local S1-mini server (llama-server)
 #   whisper-server  start [--keep] | release | stop | status: Whisper with the model kept loaded
+#   apple       status | speech-install: Apple's on-device engines (macOS 26+, the ovt-apple helper)
 
 set -euo pipefail
 # Everything this script writes (logs, recordings, state, prompts) is readable by the user only.
@@ -70,8 +74,9 @@ CLAUDE_BIN="${VTT_CLAUDE_BIN:-${CLAUDE_BIN:-claude}}"
 CLAUDE_USE_API_KEY="${CLAUDE_USE_API_KEY:-off}"
 REFINE="${VTT_REFINE:-${REFINE:-on}}"
 REFINE_MIN_WORDS="${REFINE_MIN_WORDS:-4}"
-# Cleanup engine: claude; s1 (S1-mini by Superwhisper, fully offline through llama.cpp); or openai (any
-# OpenAI-compatible /chat/completions endpoint: Ollama, LM Studio, OpenAI, Groq, OpenRouter...).
+# Cleanup engine: claude; s1 (S1-mini by Superwhisper, fully offline through llama.cpp); apple (Apple's on-device
+# language model, macOS 26+ with Apple Intelligence on); or openai (any OpenAI-compatible /chat/completions endpoint:
+# Ollama, LM Studio, OpenAI, Groq, OpenRouter...).
 CLEANUP="${VTT_CLEANUP:-${CLEANUP:-claude}}"
 OPENAI_BASE_URL="${VTT_OPENAI_BASE_URL:-${OPENAI_BASE_URL:-}}" # e.g. http://localhost:11434/v1 (Ollama)
 OPENAI_MODEL="${VTT_OPENAI_MODEL:-${OPENAI_MODEL:-}}"
@@ -87,8 +92,22 @@ fi
 COMMAND_ENGINE="${VTT_COMMAND_ENGINE:-${COMMAND_ENGINE:-claude}}"
 COMMAND_TIMEOUT="${COMMAND_TIMEOUT:-30}" # a long selection takes longer to rewrite than a dictation to clean up
 COMMAND_FILE="${VTT_COMMAND_FILE:-}"     # the app's JSON: target, original, current, turns
-# Use S1-mini when the online engine is unavailable: offline, not logged in, rate limited, an error or a timeout.
+# Use an on-device engine when the online engine is unavailable: offline, not logged in, rate limited, an error or a
+# timeout. (The name is from when S1-mini was the only one.)
 S1_FALLBACK="${VTT_S1_FALLBACK:-${S1_FALLBACK:-on}}"
+# Which on-device engine: auto (Apple's model where it's available, else S1-mini), apple or s1.
+FALLBACK_ENGINE="${FALLBACK_ENGINE:-auto}"
+# Speech engine: whisper (whisper.cpp) or apple (Apple's SpeechAnalyzer, macOS 26+; Whisper when it's unavailable).
+SPEECH_ENGINE="${VTT_SPEECH_ENGINE:-${SPEECH_ENGINE:-whisper}}"
+# Apple's transcriber: speech (SpeechTranscriber, the newer model) or dictation (DictationTranscriber, which also takes
+# the vocabulary as hints).
+APPLE_TRANSCRIBER="${VTT_APPLE_TRANSCRIBER:-${APPLE_TRANSCRIBER:-speech}}"
+# The helper for Apple's engines (built with the macOS 26 SDK, bundled with the app): a path, or a name on PATH.
+# Not found: the app's copy in Application Support, then a build in the repo (app/AppleHelper).
+APPLE_HELPER="${VTT_APPLE_HELPER:-${APPLE_HELPER:-ovt-apple}}"
+APPLE_TIMEOUT="${APPLE_TIMEOUT:-10}"         # one cleanup
+APPLE_SPEECH_TIMEOUT="${APPLE_SPEECH_TIMEOUT:-60}" # one WAV
+APPLE_STATUS_TTL="${APPLE_STATUS_TTL:-60}"   # seconds the availability check is cached
 # After an AI cleanup, paste Whisper's text instead if a number or a negation ("not", "never"...) went missing.
 MEANING_GUARD="${MEANING_GUARD:-on}"
 S1_MODEL="${S1_MODEL:-$DATA_HOME/s1-mini/s1-mini-q4_k_m.gguf}"
@@ -301,13 +320,15 @@ transcribe() {
       fail "whisper-cli failed (see $ERR_FILE)"
     fi
   fi
-  # Join lines and trim whitespace.
-  out="$(printf '%s' "$out" | tr '\n' ' ' | sed -E 's/[[:space:]]+/ /g; s/^ //; s/ $//')"
+  out="$(one_line "$out")"
   if printf '%s' "$out" | tr '[:upper:]' '[:lower:]' | grep -Eq "$HALLUCINATIONS"; then
     out=""
   fi
   printf '%s' "$out"
 }
+
+# Joins lines and trims whitespace.
+one_line() { printf '%s' "$1" | tr '\n' ' ' | sed -E 's/[[:space:]]+/ /g; s/^ //; s/ $//'; }
 
 # Transcribes with the warm whisper-server, starting it if needed (same prompt and settings as whisper-cli).
 # Fails so the caller can use whisper-cli instead.
@@ -628,9 +649,10 @@ claude_prestart() {
   [[ "$JOB" == command ]] || [[ "$REFINE" == on && "$MODE" != raw ]] || return 0
   command -v "$CLAUDE_BIN" >/dev/null || return 0
   if is_offline; then
-    if [[ "$JOB" == command ]]; then log "OFFLINE at start, Command Mode can't run"; else log "OFFLINE at start, warming S1-mini"; fi
-    # Command Mode has no offline fallback; a dictation's cleanup falls back to S1-mini, so it starts loading now.
-    if [[ "$JOB" == cleanup && "$S1_FALLBACK" == on && "$MODE" != code ]] && srv_installed s1-server; then
+    if [[ "$JOB" == command ]]; then log "OFFLINE at start, Command Mode can't run"; else log "OFFLINE at start"; fi
+    # Command Mode has no offline fallback; a dictation's cleanup falls back to an on-device engine: S1-mini starts
+    # loading now (Apple's model is managed by macOS).
+    if [[ "$JOB" == cleanup && "$S1_FALLBACK" == on && "$MODE" != code ]] && fallback_uses_s1; then
       { srv_start s1-server; } </dev/null >/dev/null 2>&1 &
     fi
     PRESTART_OFFLINE=on
@@ -1012,10 +1034,11 @@ wav_seconds() {
 
 word_count() { printf '%s' "$1" | wc -w | tr -d ' '; }
 
-# Transcribes a WAV. Sets RAW_TEXT, DURATION and WHISPER_MS; returns 1 if there is no speech.
+# Transcribes a WAV with SPEECH_ENGINE (Whisper when Apple's is unavailable or fails). Sets RAW_TEXT, DURATION,
+# SPEECH_USED (whisper or apple) and SPEECH_MS; returns 1 if there is no speech.
 transcribe_wav() {
   local wav="$1" t0
-  RAW_TEXT="" DURATION=0 WHISPER_MS=0
+  RAW_TEXT="" DURATION=0 SPEECH_MS=0 SPEECH_USED=whisper
 
   [[ -s "$wav" ]] || { log "EMPTY no audio file"; return 1; }
   DURATION="$(wav_seconds "$wav")"
@@ -1025,8 +1048,16 @@ transcribe_wav() {
   fi
 
   t0="$(now_ms)"
-  RAW_TEXT="$(transcribe "$wav")"
-  WHISPER_MS=$(($(now_ms) - t0))
+  SPEECH_USED=whisper
+  if [[ "$SPEECH_ENGINE" == apple ]]; then
+    if apple_available speech && RAW_TEXT="$(transcribe_apple "$wav")"; then
+      SPEECH_USED=apple
+    else
+      log "WARN Apple speech unavailable or failed, using Whisper"
+    fi
+  fi
+  [[ "$SPEECH_USED" == apple ]] || RAW_TEXT="$(transcribe "$wav")"
+  SPEECH_MS=$(($(now_ms) - t0))
   if [[ -z "$RAW_TEXT" ]]; then
     log "EMPTY no speech detected (audio=${DURATION}s)"
     return 1
@@ -1175,6 +1206,199 @@ try_s1() {
   return "$status"
 }
 
+# --- Apple's on-device engines (macOS 26+) ---
+# SpeechAnalyzer (speech) and the Foundation Models language model (cleanup), through `ovt-apple`, a small helper built
+# with the macOS 26 SDK (app/AppleHelper). Both run on the Mac: audio and text never leave it. Elsewhere (Linux, older
+# macOS, a build without the helper) they're simply unavailable and the other engines are used.
+
+# Prints the helper's path; fails when there is none (always on Linux), or with APPLE_HELPER=off.
+apple_helper() {
+  [[ "$OS" == Darwin && "$APPLE_HELPER" != off ]] || return 1
+  local candidate
+  for candidate in "$APPLE_HELPER" "$HOME/Library/Application Support/OpenVoiceType/Helpers/ovt-apple" \
+    "$SCRIPT_DIR/../app/AppleHelper/.build/release/ovt-apple"; do
+    if [[ "$candidate" == */* ]]; then
+      [[ -x "$candidate" ]] && { printf '%s' "$candidate"; return 0; }
+    elif [[ -n "$candidate" ]] && command -v "$candidate" 2>/dev/null; then
+      return 0
+    fi
+  done
+  return 1
+}
+
+# Prints the helper's `status` JSON: {"speech":{"available":…,"locale":…,"assets":…},"llm":{"available":…,"reason":…}}.
+# Cached for APPLE_STATUS_TTL seconds per helper build, language and transcriber (the check loads Apple's frameworks); `fresh` skips
+# the cache. A helper that can't run (macOS before 26) reports nothing available.
+apple_status() {
+  local bin cache="$STATE_DIR/apple-status" key out
+  bin="$(apple_helper)" || return 1
+  key="$bin $(file_stamp "$bin") $LANGUAGE $APPLE_TRANSCRIBER"
+  if [[ "${1:-}" != fresh && -f "$cache" && "$(head -n 1 "$cache")" == "$key" ]] &&
+    perl -e 'exit !(time - (stat $ARGV[0])[9] < $ARGV[1])' "$cache" "$APPLE_STATUS_TTL"; then
+    tail -n +2 "$cache"
+    return 0
+  fi
+  out="$(perl -e 'alarm shift; exec @ARGV or die "exec failed: $!"' 10 "$bin" status --locale "$LANGUAGE" \
+    --transcriber "$APPLE_TRANSCRIBER" 2>>"$ERR_FILE")" ||
+    out='{}'
+  printf '%s\n%s\n' "$key" "$out" >"$cache.$$" && mv -f "$cache.$$" "$cache"
+  printf '%s' "$out"
+}
+
+# apple_available speech|llm: speech needs the language's model installed; llm needs Apple Intelligence on and ready.
+apple_available() {
+  local status
+  status="$(apple_status)" || return 1
+  APPLE_STATUS_JSON="$status" perl -MJSON::PP -e '
+    my $status = eval { decode_json($ENV{APPLE_STATUS_JSON}) } or exit 1;
+    my $part = $status->{$ARGV[0]} or exit 1;
+    exit !($part->{available} && ($ARGV[0] ne "speech" || ($part->{assets} // "") eq "installed"));' "$1"
+}
+
+# The helper's speech options: language, transcriber, and the vocabulary (used as hints by the dictation transcriber).
+apple_speech_args() {
+  local vocab
+  APPLE_SPEECH_ARGS=(--locale "$LANGUAGE" --transcriber "$APPLE_TRANSCRIBER")
+  vocab="$(vocabulary)"
+  [[ -n "$vocab" ]] && APPLE_SPEECH_ARGS+=(--vocab "$vocab")
+  return 0
+}
+
+# Transcribes a finished WAV with Apple's engine. Fails so the caller can use Whisper.
+transcribe_apple() {
+  local wav="$1" bin out
+  bin="$(apple_helper)" || return 1
+  apple_speech_args
+  out="$(perl -e 'alarm shift; exec @ARGV or die "exec failed: $!"' "$APPLE_SPEECH_TIMEOUT" \
+    "$bin" transcribe "${APPLE_SPEECH_ARGS[@]}" "$wav" 2>>"$ERR_FILE")" || return 1
+  one_line "$out"
+}
+
+# Cleans up one transcript with Apple's language model: the same system prompt as Claude, and apple_message. On failure the reason goes to ENGINE_ERR_FILE: config (Apple Intelligence off,
+# not eligible, still downloading), limit (rate limited), timeout or error (a refusal, the context size, anything else).
+refine_apple() {
+  local raw="$1" bin prompt_file err out status=0 reason
+  if ! bin="$(apple_helper)" || ! apple_available llm; then
+    engine_error config "Apple Intelligence unavailable"
+    return 1
+  fi
+  prompt_file="$(mktemp "$STATE_DIR/system.XXXXXX")"
+  err="$(mktemp "$STATE_DIR/apple-error.XXXXXX")"
+  system_prompt >"$prompt_file"
+  out="$(cd /tmp && apple_message "$raw" | perl -e 'alarm shift; exec @ARGV or die "exec failed: $!"' "$APPLE_TIMEOUT" \
+    "$bin" cleanup --instructions-file "$prompt_file" 2>"$err")" || status=$?
+  rm -f "$prompt_file"
+  reason="$(head -n 1 "$err")"
+  cat "$err" >>"$ERR_FILE"
+  rm -f "$err"
+  ((status == 142)) && { engine_error timeout; return 1; } # SIGALRM: APPLE_TIMEOUT passed
+  if ((status != 0)); then
+    case "$reason" in
+      unavailable*) engine_error config "${reason#unavailable }" ;;
+      rate-limited*) engine_error limit ;;
+      *) engine_error error "${reason:-exit $status}" ;;
+    esac
+    return 1
+  fi
+  [[ -n "$(trim "$out")" ]] || { engine_error error "empty answer"; return 1; }
+  printf '%s' "$out"
+}
+
+# The user message for Apple's model: the context and vocabulary as for Claude, then the reminder in prompts/apple.md, then
+# the transcript in the system prompt's "Transcript: … Output:" example form. This ~3B model obeyed dictated requests
+# ("write a haiku…") with the <transcript> block; the reminder plus the example form keeps it to cleaning up.
+apple_message() {
+  local raw="$1" vocab
+  vocab="$(vocabulary)"
+  printf '<context app="%s" mode="%s"/>\n' "${APP_NAME//\"/}" "$MODE"
+  [[ -n "$vocab" ]] && printf '<vocabulary>%s</vocabulary>\n' "$vocab"
+  [[ -f "$PROMPTS_DIR/apple.md" ]] && printf '\n%s\n' "$(cat "$PROMPTS_DIR/apple.md")"
+  printf '\nTranscript: %s\nOutput:' "$raw"
+}
+
+# Runs Apple's model on RAW_TEXT; on success sets RESULT, ENGINE=apple and REFINE_STATUS=$1. On failure APPLE_ERROR says
+# why, and ENGINE_ERROR is left alone (as a fallback, the online engine's reason is the one the app shows).
+try_apple() {
+  local t0 out status=1 detail=""
+  APPLE_ERROR=""
+  rm -f "$ENGINE_ERR_FILE"
+  t0="$(now_ms)"
+  if out="$(refine_apple "$RAW_TEXT")"; then
+    RESULT="$out" REFINE_STATUS="$1" ENGINE=apple status=0
+  else
+    [[ -s "$ENGINE_ERR_FILE" ]] && IFS=$'\037' read -r APPLE_ERROR _ detail <"$ENGINE_ERR_FILE"
+    APPLE_ERROR="${APPLE_ERROR:-error}"
+    log "WARN apple failed: $APPLE_ERROR${detail:+: $detail}"
+    rm -f "$ENGINE_ERR_FILE"
+  fi
+  APPLE_MS=$(($(now_ms) - t0))
+  return "$status"
+}
+
+# Whether the offline fallback would load S1-mini (so it's worth warming): it's installed, and Apple's model isn't the
+# one to use.
+fallback_uses_s1() {
+  [[ "$FALLBACK_ENGINE" != apple ]] && srv_installed s1-server || return 1
+  [[ "$FALLBACK_ENGINE" == s1 ]] || ! apple_available llm
+}
+
+# When the online engine is unavailable: Apple's model where it's available (FALLBACK_ENGINE=auto or apple), else
+# S1-mini; S1-mini is also tried when Apple's model fails (auto).
+try_fallback() {
+  if [[ "$FALLBACK_ENGINE" != s1 ]] && apple_available llm && try_apple apple-fallback; then return 0; fi
+  [[ "$FALLBACK_ENGINE" != apple ]] && srv_installed s1-server && try_s1 s1-fallback
+}
+
+# App stage 1 with Apple's engine, live: the app writes the recording's 16 kHz mono 16-bit PCM to stdin while you speak
+# and closes it when you stop, so the text is ready right after. Prints the transcript (empty = no speech). Exit 2:
+# Apple's engine is unavailable or failed, and the app transcribes the WAV with Whisper instead.
+cmd_transcribe_stream() {
+  local bin stats out status=0 audio=0 finalize=0
+  if ! bin="$(apple_helper)" || ! apple_available speech; then
+    log "WARN Apple speech unavailable, the app uses Whisper"
+    cat >/dev/null # read the audio until the app stops, so its writes don't fail
+    exit 2
+  fi
+  apple_speech_args
+  stats="$(mktemp "$STATE_DIR/apple-stats.XXXXXX")"
+  out="$("$bin" transcribe "${APPLE_SPEECH_ARGS[@]}" --pcm --stats-file "$stats" 2>>"$ERR_FILE")" || status=$?
+  # One line: the audio's length in seconds, and the milliseconds from the end of the audio to the final text.
+  read -r audio finalize <"$stats" || true
+  rm -f "$stats"
+  if ((status != 0)); then
+    log "WARN Apple speech failed (exit $status), the app uses Whisper"
+    exit 2
+  fi
+  if perl -e 'exit(!($ARGV[0] < $ARGV[1]))' "${audio:-0}" "$MIN_SECONDS"; then
+    log "SKIP audio too short (${audio}s)"
+    return 0
+  fi
+  RAW_TEXT="$(one_line "$out")"
+  if [[ -z "$RAW_TEXT" ]]; then
+    log "EMPTY no speech detected (audio=${audio}s)"
+    return 0
+  fi
+  log "TRANSCRIBE audio=${audio}s apple=${finalize:-0}ms stream=on"
+  [[ "$LOG_TEXT" == on ]] && log "  raw:     $RAW_TEXT"
+  printf '%s' "$RAW_TEXT"
+}
+
+# `dictate.sh apple status` prints the helper's status (fresh); `apple speech-install` downloads the speech model for
+# LANGUAGE, printing `progress <0-1>` lines, then `installed`. Exit 2: no helper (Linux, older macOS, an older build).
+cmd_apple() {
+  local bin status=0
+  bin="$(apple_helper)" || { echo '{}'; exit 2; }
+  case "$1" in
+    status) apple_status fresh; echo ;;
+    speech-install)
+      "$bin" speech-install --locale "$LANGUAGE" --transcriber "$APPLE_TRANSCRIBER" 2>>"$ERR_FILE" || status=$?
+      rm -f "$STATE_DIR/apple-status"
+      return "$status"
+      ;;
+    *) echo "usage: dictate.sh apple status|speech-install" >&2; exit 2 ;;
+  esac
+}
+
 # A reset time for the log and the app: an epoch time (seconds or ms) becomes "3:45 PM" (with the date if not today).
 format_resets() {
   local value="$1"
@@ -1234,25 +1458,30 @@ try_online() {
 
 # Cleans up RAW_TEXT. Sets RESULT, REFINE_STATUS, ENGINE, the stage times, ENGINE_ERROR, ENGINE_RESETS, GUARD_REASON and
 # REJECTED (the cleanup the guard turned down).
-# REFINE_STATUS: ok (the online engine) | s1 (S1-mini selected) | s1-fallback (the online engine was unavailable) |
-#   skipped | failed-fallback-raw | guard-raw (the meaning guard used Whisper's text)
+# REFINE_STATUS: ok (the online engine) | s1 / apple (that on-device engine selected) | s1-fallback / apple-fallback
+#   (the online engine was unavailable) | skipped | failed-fallback-raw | guard-raw (the meaning guard used Whisper's text)
 refine_text() {
-  RESULT="$RAW_TEXT" REFINE_STATUS="skipped" ENGINE=none CLAUDE_MS=0 OPENAI_MS=0 S1_MS=0
+  RESULT="$RAW_TEXT" REFINE_STATUS="skipped" ENGINE=none CLAUDE_MS=0 OPENAI_MS=0 S1_MS=0 APPLE_MS=0
   ENGINE_ERROR="" ENGINE_RESETS="" GUARD_REASON="" REJECTED=""
   if [[ "$REFINE" == on && "$MODE" != raw && "$(word_count "$RAW_TEXT")" -ge "$REFINE_MIN_WORDS" ]]; then
-    if [[ "$CLEANUP" == s1 ]]; then
-      # S1-mini has no code style: code mode keeps the raw text (post-processing still runs).
-      if [[ "$MODE" != code ]]; then
+    if [[ "$CLEANUP" == s1 || "$CLEANUP" == apple ]]; then
+      # The on-device engines have no code style (Apple says its model isn't meant for code): code mode keeps the raw
+      # text (post-processing still runs).
+      if [[ "$MODE" == code ]]; then
+        :
+      elif [[ "$CLEANUP" == s1 ]]; then
         try_s1 s1 || REFINE_STATUS="failed-fallback-raw"
+      elif ! try_apple apple; then
+        REFINE_STATUS="failed-fallback-raw" ENGINE_ERROR="$APPLE_ERROR"
       fi
     else
       try_online
-      if [[ "$REFINE_STATUS" == failed-fallback-raw && "$S1_FALLBACK" == on && "$MODE" != code ]] && srv_installed s1-server; then
-        try_s1 s1-fallback || true
+      if [[ "$REFINE_STATUS" == failed-fallback-raw && "$S1_FALLBACK" == on && "$MODE" != code ]]; then
+        try_fallback || true
       fi
     fi
   fi
-  if [[ "$MEANING_GUARD" == on && "$REFINE_STATUS" =~ ^(ok|s1|s1-fallback)$ ]] &&
+  if [[ "$MEANING_GUARD" == on && "$REFINE_STATUS" =~ ^(ok|s1|s1-fallback|apple|apple-fallback)$ ]] &&
     ! GUARD_REASON="$(meaning_guard "$RAW_TEXT" "$RESULT")"; then
     log "GUARD the cleanup dropped $(log_safe "$GUARD_REASON"), using Whisper's text"
     REJECTED="$(printf '%s' "$RESULT" | post_process)"
@@ -1268,6 +1497,7 @@ log_safe() { if [[ "$LOG_TEXT" == on ]]; then printf '%s' "$1"; else printf '%s'
 cleanup_timings() {
   local line="claude=${CLAUDE_MS}ms s1=${S1_MS}ms"
   [[ "$ONLINE_ENGINE" == openai ]] && line+=" openai=${OPENAI_MS}ms"
+  [[ "$CLEANUP" == apple || "$APPLE_MS" != 0 ]] && line+=" apple=${APPLE_MS}ms"
   line+=" refine=$REFINE_STATUS"
   [[ -n "$ENGINE_ERROR" ]] && line+=" error=$ENGINE_ERROR"
   printf '%s' "$line"
@@ -1278,7 +1508,7 @@ process_wav() {
   claude_prestart # starts while Whisper runs
   transcribe_wav "$1" || return 1
   refine_text
-  TIMINGS="audio=${DURATION}s whisper=${WHISPER_MS}ms $(cleanup_timings)"
+  TIMINGS="audio=${DURATION}s $SPEECH_USED=${SPEECH_MS}ms $(cleanup_timings)"
 }
 
 log_result() {
@@ -1333,7 +1563,7 @@ run_file() {
 cmd_transcribe() {
   local wav="$1"
   transcribe_wav "$wav" || return 0
-  log "TRANSCRIBE audio=${DURATION}s whisper=${WHISPER_MS}ms"
+  log "TRANSCRIBE audio=${DURATION}s $SPEECH_USED=${SPEECH_MS}ms"
   [[ "$LOG_TEXT" == on ]] && log "  raw:     $RAW_TEXT"
   printf '%s' "$RAW_TEXT"
 }
@@ -1352,7 +1582,8 @@ write_result() {
 }
 
 # App stage 2: clean up stdin and print it. Exit 3: cleanup failed and the raw text was printed. Exit 4: the online
-# engine was unavailable and S1-mini cleaned it up. Exit 5: the meaning guard printed Whisper's text instead.
+# engine was unavailable and an on-device engine cleaned it up (which one: `engine` in the result file). Exit 5: the
+# meaning guard printed Whisper's text instead.
 cmd_refine() {
   # The app runs this when recording starts and writes the transcript later: Claude starts in the meantime.
   trap claude_cleanup EXIT
@@ -1366,7 +1597,7 @@ cmd_refine() {
   printf '%s' "$RESULT"
   case "$REFINE_STATUS" in
     failed-fallback-raw) exit 3 ;;
-    s1-fallback) exit 4 ;;
+    s1-fallback | apple-fallback) exit 4 ;;
     guard-raw) exit 5 ;;
   esac
 }
@@ -1472,10 +1703,12 @@ main() {
     file) run_file "${2:?usage: dictate.sh file <wav>}" ;;
     selftest) selftest ;;
     transcribe) cmd_transcribe "${2:?usage: dictate.sh transcribe <wav>}" ;;
+    transcribe-stream) cmd_transcribe_stream ;;
+    apple) cmd_apple "${2:-status}" ;;
     refine) cmd_refine ;;
     command) cmd_command ;;
     s1-server | whisper-server) cmd_server "$cmd" "${@:2}" ;;
-    -h | --help | help) sed -n '2,18p' "$0" | sed 's/^# \{0,1\}//' ;;
+    -h | --help | help) sed -n '2,22p' "$0" | sed 's/^# \{0,1\}//' ;;
     *) echo "Unknown command: $cmd" >&2; exit 2 ;;
   esac
 }

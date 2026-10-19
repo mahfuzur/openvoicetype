@@ -26,7 +26,8 @@ final class AppSettings: ObservableObject {
 
     @Published var refine: Bool { didSet { defaults.set(refine, forKey: "refine") } }
     @Published var claudeModel: String { didSet { defaults.set(claudeModel, forKey: "claudeModel") } }
-    /// "claude" (default), "s1" (S1-mini, fully offline) or "openai" (an OpenAI-compatible endpoint).
+    /// "claude" (default), "s1" (S1-mini, fully offline), "apple" (Apple's on-device model, macOS 26+) or "openai" (an
+    /// OpenAI-compatible endpoint).
     @Published var cleanupEngine: String { didSet { defaults.set(cleanupEngine, forKey: "cleanupEngine") } }
     @Published var s1Fallback: Bool { didSet { defaults.set(s1Fallback, forKey: "s1Fallback") } }
     /// The OpenAI-compatible endpoint (Ollama, LM Studio, OpenAI, Groq, OpenRouter…); its key is in `APIKeychain`.
@@ -54,6 +55,8 @@ final class AppSettings: ObservableObject {
     @Published var inputDeviceUID: String? { didSet { defaults.set(inputDeviceUID, forKey: "inputDeviceUID") } }
     @Published var inputDeviceName: String? { didSet { defaults.set(inputDeviceName, forKey: "inputDeviceName") } }
 
+    /// "whisper" (default) or "apple" (Apple's SpeechAnalyzer, macOS 26+; Whisper whenever it's unavailable).
+    @Published var speechEngine: String { didSet { defaults.set(speechEngine, forKey: "speechEngine") } }
     /// File name of the Whisper model in ~/.local/share/whisper (see `ModelCatalog`).
     @Published var whisperModel: String { didSet { defaults.set(whisperModel, forKey: "whisperModel") } }
 
@@ -64,6 +67,9 @@ final class AppSettings: ObservableObject {
 
     var usesS1: Bool { refine && cleanupEngine == "s1" }
     var usesAPI: Bool { refine && cleanupEngine == "openai" }
+    var usesApple: Bool { refine && cleanupEngine == "apple" }
+    /// Cleanup on this Mac (S1-mini or Apple's model): no network, and no code style, so code mode keeps the raw text.
+    var usesOnDeviceCleanup: Bool { usesS1 || usesApple }
 
     private init() {
         let defaults = UserDefaults.standard // a local, so the helper below doesn't capture self before init ends
@@ -90,6 +96,7 @@ final class AppSettings: ObservableObject {
         appNames = defaults.dictionary(forKey: "appNames") as? [String: String] ?? [:]
         inputDeviceUID = defaults.string(forKey: "inputDeviceUID")
         inputDeviceName = defaults.string(forKey: "inputDeviceName")
+        speechEngine = defaults.string(forKey: "speechEngine") ?? "whisper"
         // Existing installs keep the full model they already have; new ones default to the compressed one.
         whisperModel = defaults.string(forKey: "whisperModel")
             ?? (ModelCatalog.fullWhisper.isInstalled ? ModelCatalog.fullWhisper.fileName : ModelCatalog.defaultWhisper.fileName)

@@ -27,8 +27,14 @@
 # CLAUDE_BIN="claude"      # path to the Claude Code CLI, if it isn't on PATH
 # CLAUDE_USE_API_KEY="off" # on = let an exported ANTHROPIC_API_KEY bill the API instead of your Claude plan
 
-# Cleanup engine: claude, openai (the endpoint below), or s1 to always clean up on this computer
+# Cleanup engine: claude, openai (the endpoint below), or on this computer: s1, or apple (Apple Intelligence, macOS 26+)
 # CLEANUP="claude"
+
+# Apple's on-device engines (macOS 26+, through the app's ovt-apple helper; unavailable elsewhere)
+# SPEECH_ENGINE="whisper"   # or apple: Apple's SpeechAnalyzer (Whisper is used when it's unavailable)
+# APPLE_TRANSCRIBER="speech" # or dictation: Apple's dictation model, which also takes the dictionary as hints
+# FALLBACK_ENGINE="auto"    # the offline fallback: auto (Apple Intelligence when it's on, else S1-mini), apple or s1
+# APPLE_TIMEOUT=10          # seconds for one cleanup with Apple Intelligence
 
 # An OpenAI-compatible endpoint (CLEANUP="openai"): Ollama, LM Studio, OpenAI, Groq, OpenRouter...
 # OPENAI_BASE_URL="http://localhost:11434/v1"
@@ -41,7 +47,7 @@
 # COMMAND_TIMEOUT=30       # seconds; rewriting a long selection takes longer than cleaning up a dictation
 
 # Offline cleanup with S1-mini by Superwhisper (English only; install.sh --with-s1-mini downloads it)
-# S1_FALLBACK="on"         # use S1-mini when the online engine is unavailable (offline, not logged in, error, timeout)
+# S1_FALLBACK="on"         # clean up on this computer (FALLBACK_ENGINE) when the online engine is unavailable
 # S1_MODEL="$HOME/.local/share/s1-mini/s1-mini-q4_k_m.gguf"
 # S1_PORT=8178             # local llama-server port
 # S1_TIMEOUT=10            # seconds before falling back to the raw text
