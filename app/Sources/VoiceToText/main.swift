@@ -7,6 +7,7 @@ signal(SIGPIPE, SIG_IGN)
 // (--settings-snapshots, --recorder-selftest, …), which must not use up the one-time copy on a maintainer's Mac.
 if !CommandLine.arguments.dropFirst().contains(where: { $0.hasPrefix("--") }) {
     Migration.copySettings()
+    Migration.moveModels()
 }
 
 let app = NSApplication.shared

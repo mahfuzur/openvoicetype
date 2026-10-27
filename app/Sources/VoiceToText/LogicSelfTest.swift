@@ -99,6 +99,28 @@ enum LogicSelfTest {
             && payload?["original"] as? String == "hey can u send it"
             && payload?["current"] as? String == "Could you please send it?"
             && (payload?["turns"] as? [[String: String]])?.first?["instruction"] == "make it formal")
+
+        // Moving the models out of ~/.local/share: ours move (a relative link is re-pointed), others' files stay.
+        let fileManager = FileManager.default
+        let scratch = fileManager.temporaryDirectory.appendingPathComponent("vtt-models-\(UUID().uuidString)")
+        let oldRoot = scratch.appendingPathComponent("share"), newRoot = scratch.appendingPathComponent("models")
+        let oldWhisper = oldRoot.appendingPathComponent("whisper"), oldS1 = oldRoot.appendingPathComponent("s1-mini")
+        try? fileManager.createDirectory(at: oldWhisper, withIntermediateDirectories: true)
+        try? fileManager.createDirectory(at: oldS1, withIntermediateDirectories: true)
+        try? Data("model".utf8).write(to: oldWhisper.appendingPathComponent(ModelCatalog.defaultWhisper.fileName))
+        try? Data("other".utf8).write(to: oldWhisper.appendingPathComponent("ggml-tiny.bin"))
+        try? Data("s1".utf8).write(to: scratch.appendingPathComponent("elsewhere.gguf"))
+        try? fileManager.createSymbolicLink(atPath: oldS1.appendingPathComponent(ModelCatalog.s1Mini.fileName).path,
+                                            withDestinationPath: "../../elsewhere.gguf")
+        Migration.moveModels(from: oldRoot, to: newRoot)
+        let movedWhisper = newRoot.appendingPathComponent("whisper/\(ModelCatalog.defaultWhisper.fileName)")
+        let movedS1 = newRoot.appendingPathComponent("s1-mini/\(ModelCatalog.s1Mini.fileName)")
+        check("models move to the app's folder", (try? String(contentsOf: movedWhisper)) == "model"
+            && (try? String(contentsOf: movedS1)) == "s1"
+            && fileManager.fileExists(atPath: oldWhisper.appendingPathComponent("ggml-tiny.bin").path)
+            && !fileManager.fileExists(atPath: oldWhisper.appendingPathComponent(ModelCatalog.defaultWhisper.fileName).path)
+            && !fileManager.fileExists(atPath: oldS1.path))
+        try? fileManager.removeItem(at: scratch)
         return lines
     }
 }

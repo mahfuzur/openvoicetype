@@ -18,12 +18,14 @@ BIN_DIR="$HOME/.local/bin"
 # The same folders as dictate.sh: XDG base directories on Linux, fixed paths on macOS.
 if [[ "$(uname -s)" == Linux ]]; then
   CONFIG_HOME="${XDG_CONFIG_HOME:-$HOME/.config}" DATA_HOME="${XDG_DATA_HOME:-$HOME/.local/share}"
+  MODELS_DIR="$DATA_HOME/openvoicetype/models"
 else
   CONFIG_HOME="$HOME/.config" DATA_HOME="$HOME/.local/share"
+  MODELS_DIR="$HOME/Library/Application Support/OpenVoiceType/models"
 fi
 CONFIG_DIR="$CONFIG_HOME/voice-to-text"
-MODEL_DIR="$DATA_HOME/whisper"
-S1_DIR="$DATA_HOME/s1-mini"
+MODEL_DIR="$MODELS_DIR/whisper"
+S1_DIR="$MODELS_DIR/s1-mini"
 # Pinned revisions and checksums, the same as the app's model manager (app/Sources/VoiceToText/ModelManager.swift).
 WHISPER_REPO="https://huggingface.co/ggerganov/whisper.cpp/resolve/5359861c739e955e79d9a303bcbc70fb988958b1"
 S1_REPO="https://huggingface.co/superwhisper/s1-mini-GGUF/resolve/34add00a48a2e5d24e5a4ee5405a99620a3a240c"
@@ -81,6 +83,30 @@ download() {
   fi
   mv "$file.part" "$file"
 }
+
+# Up to v0.5 the models were in $DATA_HOME/whisper and $DATA_HOME/s1-mini. Move ours (only the catalog's file names;
+# a symlink moves as the link) and remove the old folder if nothing else is in it.
+move_old_models() {
+  local kind="$1" name old target
+  shift
+  for name in "$@"; do
+    old="$DATA_HOME/$kind/$name"
+    [[ -e "$old" || -L "$old" ]] && [[ ! -e "$MODELS_DIR/$kind/$name" ]] || continue
+    mkdir -p "$MODELS_DIR/$kind"
+    # A relative link would point somewhere else after the move: link to the file it resolves to instead.
+    if [[ -L "$old" && "$(readlink "$old")" != /* ]] &&
+      target="$(perl -MCwd=abs_path -e 'my $p = abs_path($ARGV[0]); exit 1 unless defined $p && -e $p; print $p' "$old")"; then
+      ln -s "$target" "$MODELS_DIR/$kind/$name" && rm "$old"
+    else
+      mv "$old" "$MODELS_DIR/$kind/$name"
+    fi
+    echo "Moved $old to $MODELS_DIR/$kind/"
+  done
+  rm -f "$DATA_HOME/$kind/.DS_Store"
+  rmdir "$DATA_HOME/$kind" 2>/dev/null || true
+}
+move_old_models whisper ggml-large-v3-turbo-q5_0.bin ggml-large-v3-turbo.bin ggml-base.en.bin
+move_old_models s1-mini s1-mini-q4_k_m.gguf
 
 mkdir -p "$BIN_DIR" "$CONFIG_DIR"
 chmod +x "$REPO_DIR/scripts/dictate.sh"

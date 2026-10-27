@@ -2,8 +2,10 @@
 # voice-to-text config, sourced by dictate.sh.
 # Installed at ~/.config/voice-to-text/config.sh. Every setting is optional; defaults are shown.
 
+# Models live in the app's folder: ~/Library/Application Support/OpenVoiceType/models on macOS,
+# ~/.local/share/openvoicetype/models on Linux ($XDG_DATA_HOME).
 # Whisper model (ggml format). Default: the compressed large-v3-turbo if it's there, else the full one.
-# WHISPER_MODEL="$HOME/.local/share/whisper/ggml-large-v3-turbo-q5_0.bin"
+# WHISPER_MODEL="$HOME/Library/Application Support/OpenVoiceType/models/whisper/ggml-large-v3-turbo-q5_0.bin"
 
 # Keep Whisper loaded in a local whisper-server (faster; about 750 MB of memory while loaded, 1.7 GB with the full model)
 # WHISPER_SERVER="on"      # off = load the model with whisper-cli on every dictation
@@ -48,7 +50,7 @@
 
 # Offline cleanup with S1-mini by Superwhisper (English only; install.sh --with-s1-mini downloads it)
 # S1_FALLBACK="on"         # clean up on this computer (FALLBACK_ENGINE) when the online engine is unavailable
-# S1_MODEL="$HOME/.local/share/s1-mini/s1-mini-q4_k_m.gguf"
+# S1_MODEL="$HOME/Library/Application Support/OpenVoiceType/models/s1-mini/s1-mini-q4_k_m.gguf"
 # S1_PORT=8178             # local llama-server port
 # S1_TIMEOUT=10            # seconds before falling back to the raw text
 # S1_IDLE_MINUTES=10       # a server started for a fallback stops after this long unused

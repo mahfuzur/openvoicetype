@@ -57,7 +57,7 @@ final class AppSettings: ObservableObject {
 
     /// "whisper" (default) or "apple" (Apple's SpeechAnalyzer, macOS 26+; Whisper whenever it's unavailable).
     @Published var speechEngine: String { didSet { defaults.set(speechEngine, forKey: "speechEngine") } }
-    /// File name of the Whisper model in ~/.local/share/whisper (see `ModelCatalog`).
+    /// File name of the Whisper model in `ModelCatalog.whisperDirectory`.
     @Published var whisperModel: String { didSet { defaults.set(whisperModel, forKey: "whisperModel") } }
 
     @Published var setupCompleted: Bool { didSet { defaults.set(setupCompleted, forKey: "setupCompleted") } }

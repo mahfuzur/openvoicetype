@@ -35,25 +35,45 @@ OS="$(uname -s)"
 # Linux follows the XDG base directories. macOS keeps the fixed paths the app also uses, whatever XDG_* says.
 if [[ "$OS" == Linux ]]; then
   CONFIG_HOME="${XDG_CONFIG_HOME:-$HOME/.config}" DATA_HOME="${XDG_DATA_HOME:-$HOME/.local/share}"
+  MODELS_DIR="$DATA_HOME/openvoicetype/models"
 else
   CONFIG_HOME="$HOME/.config" DATA_HOME="$HOME/.local/share"
+  MODELS_DIR="$HOME/Library/Application Support/OpenVoiceType/models"
 fi
+# Models were in $DATA_HOME/whisper and $DATA_HOME/s1-mini up to v0.5. The app and install.sh move them to MODELS_DIR;
+# until then (or for a config.sh that still names the old path) they're read from there.
 
 CONFIG_FILE="${VTT_CONFIG:-$CONFIG_HOME/voice-to-text/config.sh}"
 # shellcheck source=/dev/null
 [[ -f "$CONFIG_FILE" ]] && source "$CONFIG_FILE"
 
-# The compressed model (the app's default) when it's there, else the full one install.sh used to download.
-default_whisper_model() {
-  local dir="$DATA_HOME/whisper" name
-  for name in ggml-large-v3-turbo-q5_0.bin ggml-large-v3-turbo.bin; do
-    [[ -f "$dir/$name" ]] && { printf '%s' "$dir/$name"; return 0; }
+# model_path <whisper|s1-mini> <file name>...: the first file found, in MODELS_DIR, then in the old folder.
+model_path() {
+  local kind="$1" dir name
+  shift
+  for dir in "$MODELS_DIR/$kind" "$DATA_HOME/$kind"; do
+    for name in "$@"; do
+      [[ -f "$dir/$name" ]] && { printf '%s' "$dir/$name"; return 0; }
+    done
   done
-  printf '%s' "$dir/ggml-large-v3-turbo-q5_0.bin"
+  printf '%s' "$MODELS_DIR/$kind/$1"
+}
+
+# A configured path in the old folder whose file was moved: the moved file.
+moved_model() {
+  local kind
+  for kind in whisper s1-mini; do
+    if [[ ! -e "$1" && "$1" == "$DATA_HOME/$kind/"* && -f "$MODELS_DIR/$kind/${1##*/}" ]]; then
+      printf '%s' "$MODELS_DIR/$kind/${1##*/}"
+      return 0
+    fi
+  done
+  printf '%s' "$1"
 }
 
 # VTT_* variables are set by the menu-bar app and take precedence over config.sh.
-WHISPER_MODEL="${VTT_WHISPER_MODEL:-${WHISPER_MODEL:-$(default_whisper_model)}}"
+# The default: the compressed model (the app's default) when it's there, else the full one install.sh used to download.
+WHISPER_MODEL="${VTT_WHISPER_MODEL:-$(moved_model "${WHISPER_MODEL:-$(model_path whisper ggml-large-v3-turbo-q5_0.bin ggml-large-v3-turbo.bin)}")}"
 # Keep Whisper loaded in a local whisper-server (about 0.9 s per dictation instead of 1.6-2 s with whisper-cli).
 # It starts when recording starts and stops after WHISPER_IDLE_MINUTES unused; whisper-cli is the fallback.
 WHISPER_SERVER="${WHISPER_SERVER:-on}"
@@ -110,7 +130,7 @@ APPLE_SPEECH_TIMEOUT="${APPLE_SPEECH_TIMEOUT:-60}" # one WAV
 APPLE_STATUS_TTL="${APPLE_STATUS_TTL:-60}"   # seconds the availability check is cached
 # After an AI cleanup, paste Whisper's text instead if a number or a negation ("not", "never"...) went missing.
 MEANING_GUARD="${MEANING_GUARD:-on}"
-S1_MODEL="${S1_MODEL:-$DATA_HOME/s1-mini/s1-mini-q4_k_m.gguf}"
+S1_MODEL="$(moved_model "${S1_MODEL:-$(model_path s1-mini s1-mini-q4_k_m.gguf)}")"
 S1_PORT="${S1_PORT:-8178}"
 S1_TIMEOUT="${S1_TIMEOUT:-10}"
 S1_IDLE_MINUTES="${S1_IDLE_MINUTES:-10}" # a server started for a fallback stops after this long unused

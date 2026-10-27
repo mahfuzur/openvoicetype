@@ -20,9 +20,12 @@ struct ModelFile: Identifiable, Equatable {
 }
 
 enum ModelCatalog {
-    private static let home = FileManager.default.homeDirectoryForCurrentUser
-    static let whisperDirectory = home.appendingPathComponent(".local/share/whisper")
-    static let s1Directory = home.appendingPathComponent(".local/share/s1-mini")
+    /// ~/Library/Application Support/OpenVoiceType/models, next to the helpers. dictate.sh and install.sh use the same
+    /// folders. Up to v0.5 they were ~/.local/share/whisper and ~/.local/share/s1-mini (see `Migration.moveModels`).
+    static let directory = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0]
+        .appendingPathComponent("OpenVoiceType/models")
+    static let whisperDirectory = directory.appendingPathComponent("whisper")
+    static let s1Directory = directory.appendingPathComponent("s1-mini")
     private static let whisperRepo = "https://huggingface.co/ggerganov/whisper.cpp/resolve/5359861c739e955e79d9a303bcbc70fb988958b1/"
     private static let s1Repo = "https://huggingface.co/superwhisper/s1-mini-GGUF/resolve/34add00a48a2e5d24e5a4ee5405a99620a3a240c/"
 

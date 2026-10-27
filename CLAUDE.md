@@ -29,9 +29,14 @@ hotkey -> pin the paste target (app, window, title; refuse password fields) and 
 - The app bundles its own static `whisper-server`, `whisper-cli` and `llama-server` (`scripts/build-deps.sh`, needs `cmake`),
   so it runs on a Mac without Homebrew. The CLI (`dictate start`) still uses Homebrew's `sox`/`rec` and whisper.cpp.
 - The `claude` CLI must be on `PATH` and logged in.
-- Whisper models live in `~/.local/share/whisper/` (the app's model manager downloads them; `install.sh` downloads or links
-  `ggml-large-v3-turbo.bin`). The app passes the chosen one as `VTT_WHISPER_MODEL`. Always read the path from config or the
-  environment; never hardcode another app's model folder.
+- Downloaded models live in the app's own folder, `<app data>/models/whisper/` and `models/s1-mini/`: macOS
+  `~/Library/Application Support/OpenVoiceType`, Linux `$XDG_DATA_HOME/openvoicetype` (`~/.local/share/openvoicetype`),
+  Windows `%LOCALAPPDATA%\OpenVoiceType`. `ModelCatalog.directory` (Swift), `paths::app_data_dir()` (Rust, names all three),
+  `MODELS_DIR` in `dictate.sh` and `install.sh` must agree. Up to v0.5 they were in `~/.local/share/whisper` and `s1-mini`:
+  the app (`Migration.moveModels`, Rust `models::move_old_models`) and `install.sh` move the catalog's files (a relative
+  symlink is re-pointed), `dictate.sh` still reads the old folder, and maps an old path in `config.sh` to the moved file.
+  The app passes the chosen Whisper model as `VTT_WHISPER_MODEL`. Always read the path from config or the environment;
+  never hardcode another app's model folder.
 
 ## Hard constraints
 
@@ -88,7 +93,7 @@ env -u ANTHROPIC_API_KEY -u ANTHROPIC_AUTH_TOKEN MAX_THINKING_TOKENS=0 CLAUDE_CO
 
 ## Offline cleanup with S1-mini (M2.5)
 
-- S1-mini by Superwhisper (0.6B, `~/.local/share/s1-mini/s1-mini-q4_k_m.gguf`, config `S1_MODEL`) runs in `llama-server`
+- S1-mini by Superwhisper (0.6B, `<app data>/models/s1-mini/s1-mini-q4_k_m.gguf`, config `S1_MODEL`) runs in `llama-server`
   (bundled in the app; Homebrew `llama.cpp` for the CLI) on `127.0.0.1:$S1_PORT` (8178). `refine_s1()` in `dictate.sh` posts to `/v1/chat/completions`.
 - `CLEANUP=claude|s1` (`VTT_CLEANUP`). With `claude`, S1-mini is the fallback (`S1_FALLBACK`, `VTT_S1_FALLBACK`) when there's
   `is_offline()` is true (no default route, or a 1 s TCP connect to `api.anthropic.com:443` fails; skipped behind a proxy,
