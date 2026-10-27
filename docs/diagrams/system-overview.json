@@ -74,7 +74,7 @@
       ]
     },
     {
-      "id": "models", "type": "database", "label": "Model files", "sublabel": "~/.local/share",
+      "id": "models", "type": "database", "label": "Model files", "sublabel": "OpenVoiceType/models",
       "pos": [1080, 80], "size": [160, 64],
       "sources": [
         { "path": "app/Sources/VoiceToText/ModelManager.swift", "line": 22, "end_line": 49, "label": "ModelCatalog" },

@@ -1,10 +1,14 @@
 //! Where things live on Linux. These must match `scripts/dictate.sh`, which picks the same folders: the XDG base
-//! directories, with the `voice-to-text` folder names the macOS app and the CLI have always used.
+//! directories, with the `voice-to-text` folder names the macOS app and the CLI have always used, and the app's own
+//! `openvoicetype` folder for the models (`app_data_dir` also names the macOS and Windows ones).
 
 use std::path::PathBuf;
 
 fn home() -> PathBuf {
-    std::env::var_os("HOME").map(PathBuf::from).unwrap_or_else(|| PathBuf::from("/"))
+    std::env::var_os("HOME")
+        .or_else(|| std::env::var_os("USERPROFILE"))
+        .map(PathBuf::from)
+        .unwrap_or_else(|| PathBuf::from("/"))
 }
 
 /// An XDG variable, if set to an absolute path (the spec says to ignore relative ones), else `$HOME/<fallback>`.
@@ -29,17 +33,39 @@ pub fn settings_file() -> PathBuf {
     config_dir().join("settings.json")
 }
 
-/// `~/.local/share`: the models go in `whisper/` and `s1-mini/`, shared with the CLI.
+/// `~/.local/share` (`$XDG_DATA_HOME`).
 pub fn data_home() -> PathBuf {
     xdg("XDG_DATA_HOME", ".local/share")
 }
 
+/// The app's own data folder, the same on every platform as in `ModelManager.swift`, `dictate.sh` and `install.sh`.
+pub fn app_data_dir() -> PathBuf {
+    app_data_dir_on(std::env::consts::OS)
+}
+
+fn app_data_dir_on(os: &str) -> PathBuf {
+    match os {
+        "macos" => home().join("Library/Application Support/OpenVoiceType"),
+        "windows" => match std::env::var_os("LOCALAPPDATA").map(PathBuf::from) {
+            Some(path) if path.is_absolute() => path,
+            _ => home().join("AppData").join("Local"),
+        }
+        .join("OpenVoiceType"),
+        _ => data_home().join("openvoicetype"),
+    }
+}
+
+/// The downloaded models, shared with the CLI: `whisper/` and `s1-mini/`.
+pub fn models_dir() -> PathBuf {
+    app_data_dir().join("models")
+}
+
 pub fn whisper_dir() -> PathBuf {
-    data_home().join("whisper")
+    models_dir().join("whisper")
 }
 
 pub fn s1_dir() -> PathBuf {
-    data_home().join("s1-mini")
+    models_dir().join("s1-mini")
 }
 
 /// Runtime state: pid files, per-run result and key files, recordings. `$XDG_RUNTIME_DIR` is private to the user and
@@ -81,7 +107,15 @@ mod tests {
         std::fs::create_dir_all(&runtime).unwrap();
         std::env::set_var("XDG_RUNTIME_DIR", &runtime);
         assert_eq!(dictionary_file(), PathBuf::from("/home/u/.config/voice-to-text/dictionary.txt"));
-        assert_eq!(whisper_dir(), PathBuf::from("/home/u/.local/share/whisper"));
+        assert_eq!(whisper_dir(), PathBuf::from("/home/u/.local/share/openvoicetype/models/whisper"));
+        assert_eq!(app_data_dir_on("macos"), PathBuf::from("/home/u/Library/Application Support/OpenVoiceType"));
+        std::env::set_var("LOCALAPPDATA", "/c/Users/u/AppData/Local");
+        assert_eq!(app_data_dir_on("windows"), PathBuf::from("/c/Users/u/AppData/Local/OpenVoiceType"));
+        std::env::remove_var("LOCALAPPDATA");
+        assert_eq!(app_data_dir_on("windows"), PathBuf::from("/home/u/AppData/Local/OpenVoiceType"));
+        std::env::set_var("XDG_DATA_HOME", "/data");
+        assert_eq!(s1_dir(), PathBuf::from("/data/openvoicetype/models/s1-mini"));
+        std::env::remove_var("XDG_DATA_HOME");
         assert_eq!(state_dir(), runtime.join("voice-to-text"));
         std::env::set_var("XDG_RUNTIME_DIR", "/nonexistent/run");
         let uid = unsafe { libc::getuid() };

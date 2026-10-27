@@ -56,7 +56,7 @@ pub struct Settings {
     pub input_device: Option<String>,
     pub input_device_name: Option<String>,
 
-    /// The Whisper model's file name in ~/.local/share/whisper.
+    /// The Whisper model's file name in `paths::whisper_dir()`.
     pub whisper_model: String,
     pub setup_completed: bool,
     pub check_for_updates: bool,

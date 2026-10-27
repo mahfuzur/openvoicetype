@@ -155,7 +155,7 @@ prompt format right, and every user would have to install a separate app.
   Requests go to its OpenAI-style `/v1/chat/completions` endpoint with `curl`.
 - **Memory (about 1 GB measured: the 484 MB model plus a 4K context):** kept loaded only while S1-mini is the selected cleanup. For a fallback it's started on demand
   (about 1–2 s extra that time) and stopped after a few idle minutes.
-- The model path comes from config (`S1_MODEL`, default `~/.local/share/s1-mini/s1-mini-q4_k_m.gguf`). `install.sh`
+- The model path comes from config (`S1_MODEL`, default `models/s1-mini/s1-mini-q4_k_m.gguf` in the app's data folder). `install.sh`
   installs llama.cpp and downloads the model.
 
 **Prompt:** S1-mini doesn't follow instructions. It takes its own fixed system prompt, then a control line and the transcript:

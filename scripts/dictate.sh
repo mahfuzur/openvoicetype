@@ -35,8 +35,10 @@ OS="$(uname -s)"
 # Linux follows the XDG base directories. macOS keeps the fixed paths the app also uses, whatever XDG_* says.
 if [[ "$OS" == Linux ]]; then
   CONFIG_HOME="${XDG_CONFIG_HOME:-$HOME/.config}" DATA_HOME="${XDG_DATA_HOME:-$HOME/.local/share}"
+  MODELS_DIR="$DATA_HOME/openvoicetype/models"
 else
-  CONFIG_HOME="$HOME/.config" DATA_HOME="$HOME/.local/share"
+  CONFIG_HOME="$HOME/.config"
+  MODELS_DIR="$HOME/Library/Application Support/OpenVoiceType/models"
 fi
 
 CONFIG_FILE="${VTT_CONFIG:-$CONFIG_HOME/voice-to-text/config.sh}"
@@ -45,7 +47,7 @@ CONFIG_FILE="${VTT_CONFIG:-$CONFIG_HOME/voice-to-text/config.sh}"
 
 # The compressed model (the app's default) when it's there, else the full one install.sh used to download.
 default_whisper_model() {
-  local dir="$DATA_HOME/whisper" name
+  local dir="$MODELS_DIR/whisper" name
   for name in ggml-large-v3-turbo-q5_0.bin ggml-large-v3-turbo.bin; do
     [[ -f "$dir/$name" ]] && { printf '%s' "$dir/$name"; return 0; }
   done
@@ -110,7 +112,7 @@ APPLE_SPEECH_TIMEOUT="${APPLE_SPEECH_TIMEOUT:-60}" # one WAV
 APPLE_STATUS_TTL="${APPLE_STATUS_TTL:-60}"   # seconds the availability check is cached
 # After an AI cleanup, paste Whisper's text instead if a number or a negation ("not", "never"...) went missing.
 MEANING_GUARD="${MEANING_GUARD:-on}"
-S1_MODEL="${S1_MODEL:-$DATA_HOME/s1-mini/s1-mini-q4_k_m.gguf}"
+S1_MODEL="${S1_MODEL:-$MODELS_DIR/s1-mini/s1-mini-q4_k_m.gguf}"
 S1_PORT="${S1_PORT:-8178}"
 S1_TIMEOUT="${S1_TIMEOUT:-10}"
 S1_IDLE_MINUTES="${S1_IDLE_MINUTES:-10}" # a server started for a fallback stops after this long unused

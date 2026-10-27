@@ -2,6 +2,14 @@
 
 ## Unreleased
 
+**Models are saved in the app's own folder.** Downloaded models were saved in shared folders (`~/.local/share/whisper` and
+`~/.local/share/s1-mini`) that other tools use too. They now go in a folder named after the app:
+
+- macOS: `~/Library/Application Support/OpenVoiceType/models` (next to the app's helpers).
+- Linux: `~/.local/share/openvoicetype/models` (`$XDG_DATA_HOME`). Windows, for the coming port:
+  `%LOCALAPPDATA%\OpenVoiceType\models`.
+- Models in the old folders aren't moved: download them again in Settings → Speech, or move them into the new folder.
+
 **Apple's on-device engines (macOS 26 and later).** The whole pipeline can now run on Apple's own models, with nothing to
 download from us.
 
