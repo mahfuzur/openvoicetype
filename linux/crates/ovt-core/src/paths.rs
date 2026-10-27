@@ -33,7 +33,7 @@ pub fn settings_file() -> PathBuf {
     config_dir().join("settings.json")
 }
 
-/// `~/.local/share`. Up to v0.5 the models were in its `whisper/` and `s1-mini/` (see `models::move_old_models`).
+/// `~/.local/share` (`$XDG_DATA_HOME`).
 pub fn data_home() -> PathBuf {
     xdg("XDG_DATA_HOME", ".local/share")
 }

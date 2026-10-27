@@ -25,45 +25,6 @@ enum Migration {
         AppLog.write("MIGRATION copied \(old.count) settings from Voice to Text")
     }
 
-    /// Moves the models from the folders used up to v0.5 (~/.local/share/whisper and ~/.local/share/s1-mini) into the
-    /// app's own folder. Only the catalog's file names: anything else there isn't ours. A rename on the same disk, so
-    /// it's instant. Runs before anything checks whether a model is installed. The parameters are for the self-test.
-    static func moveModels(from oldRoot: URL = FileManager.default.homeDirectoryForCurrentUser
-                               .appendingPathComponent(".local/share"),
-                           to newRoot: URL = ModelCatalog.directory) {
-        let fileManager = FileManager.default
-        // The old and new folders have the same names: whisper and s1-mini.
-        for model in ModelCatalog.whisper + [ModelCatalog.s1Mini] {
-            let kind = model.directory.lastPathComponent
-            let old = oldRoot.appendingPathComponent(kind).appendingPathComponent(model.fileName)
-            let new = newRoot.appendingPathComponent(kind).appendingPathComponent(model.fileName)
-            // attributesOfItem doesn't follow symlinks: a link to another app's copy moves as the link.
-            guard (try? fileManager.attributesOfItem(atPath: old.path)) != nil,
-                  (try? fileManager.attributesOfItem(atPath: new.path)) == nil else { continue }
-            do {
-                try fileManager.createDirectory(at: new.deletingLastPathComponent(), withIntermediateDirectories: true)
-                if let link = try? fileManager.destinationOfSymbolicLink(atPath: old.path), !link.hasPrefix("/") {
-                    // A relative link would point somewhere else after the move.
-                    let target = URL(fileURLWithPath: link, relativeTo: old.deletingLastPathComponent()).standardizedFileURL
-                    try fileManager.createSymbolicLink(at: new, withDestinationURL: target)
-                    try fileManager.removeItem(at: old)
-                } else {
-                    try fileManager.moveItem(at: old, to: new)
-                }
-                AppLog.write("MIGRATION moved \(old.path) to \(new.deletingLastPathComponent().path)")
-            } catch {
-                AppLog.write("MIGRATION couldn't move \(old.path): \(error.localizedDescription)")
-            }
-        }
-        // The old folders go once nothing else is in them (Show in Finder may have left a .DS_Store).
-        for kind in ["whisper", "s1-mini"] {
-            let folder = oldRoot.appendingPathComponent(kind)
-            guard let contents = try? fileManager.contentsOfDirectory(atPath: folder.path),
-                  contents.allSatisfy({ $0 == ".DS_Store" }) else { continue }
-            try? fileManager.removeItem(at: folder)
-        }
-    }
-
     /// Copies of the old app where users keep apps (not build folders or a mounted DMG).
     static func oldApps() -> [URL] {
         let home = FileManager.default.homeDirectoryForCurrentUser.path

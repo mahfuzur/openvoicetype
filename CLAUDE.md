@@ -32,9 +32,8 @@ hotkey -> pin the paste target (app, window, title; refuse password fields) and 
 - Downloaded models live in the app's own folder, `<app data>/models/whisper/` and `models/s1-mini/`: macOS
   `~/Library/Application Support/OpenVoiceType`, Linux `$XDG_DATA_HOME/openvoicetype` (`~/.local/share/openvoicetype`),
   Windows `%LOCALAPPDATA%\OpenVoiceType`. `ModelCatalog.directory` (Swift), `paths::app_data_dir()` (Rust, names all three),
-  `MODELS_DIR` in `dictate.sh` and `install.sh` must agree. Up to v0.5 they were in `~/.local/share/whisper` and `s1-mini`:
-  the app (`Migration.moveModels`, Rust `models::move_old_models`) and `install.sh` move the catalog's files (a relative
-  symlink is re-pointed), `dictate.sh` still reads the old folder, and maps an old path in `config.sh` to the moved file.
+  `MODELS_DIR` in `dictate.sh` and `install.sh` must agree. (Up to v0.5 they were in `~/.local/share/whisper` and `s1-mini`;
+  nothing moves them.)
   The app passes the chosen Whisper model as `VTT_WHISPER_MODEL`. Always read the path from config or the environment;
   never hardcode another app's model folder.
 
