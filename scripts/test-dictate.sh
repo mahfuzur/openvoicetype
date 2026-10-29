@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # Tests dictate.sh's app contract on macOS and Linux without a microphone, Whisper or a Claude login: `refine` with
 # cleanup off, the pre-started and one-shot Claude calls (scripts/testdata/fake-claude), a usage limit, offline, the
-# online check, Apple's on-device engines (scripts/testdata/fake-ovt-apple), the server pid check and log rotation. Runs in a temporary HOME, so your logs and settings are untouched.
+# online check, an unknown command, Apple's on-device engines (scripts/testdata/fake-ovt-apple), the server pid check and log rotation. Runs in a temporary HOME, so your logs and settings are untouched.
 #
 #   scripts/test-dictate.sh        (CI runs it on both platforms)
 set -uo pipefail
@@ -51,6 +51,10 @@ out="$(printf 'mail me at Bob@Example.COM today' | VTT_REFINE=off bash "$D" refi
 check "refine with cleanup off" "$? $out" "0 mail me at bob@example.com today"
 check "state folder is private" "$(mode "$STATE")" 700
 check "log in the platform's folder" "$([[ -f "$LOGS/dictate.log" ]] && echo yes)" yes
+
+# An unknown command: exit 2, with the message on stderr.
+err="$(bash "$D" nonsense 2>&1 >/dev/null)"
+check "unknown command" "$? $err" "2 Unknown command: nonsense"
 
 # The pre-started Claude (stream-json), with the result file.
 rf="$STATE/result-test.json"
