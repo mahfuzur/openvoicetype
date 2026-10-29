@@ -2,7 +2,8 @@
 # Local dictation: record -> whisper.cpp (or Apple's SpeechAnalyzer) -> cleanup (claude CLI, or on the Mac: Apple's
 # on-device model or S1-mini) -> paste into the focused app.
 #
-# Usage: dictate.sh [toggle|start|stop|cancel|file <wav>|selftest|transcribe <wav>|refine|s1-server|whisper-server <cmd>]
+# Usage: dictate.sh [toggle|start|stop|cancel|file <wav>|selftest|transcribe <wav>|transcribe-stream|refine|command|
+#                    s1-server|whisper-server <cmd>|apple <cmd>]
 #   toggle      (default) start recording, or stop and process if already recording
 #   start       start recording
 #   stop        stop recording, transcribe, refine, paste
@@ -1710,7 +1711,7 @@ main() {
     refine) cmd_refine ;;
     command) cmd_command ;;
     s1-server | whisper-server) cmd_server "$cmd" "${@:2}" ;;
-    -h | --help | help) sed -n '2,22p' "$0" | sed 's/^# \{0,1\}//' ;;
+    -h | --help | help) sed -n '2,23p' "$0" | sed 's/^# \{0,1\}//' ;;
     *) echo "Unknown command: $cmd" >&2; exit 2 ;;
   esac
 }
