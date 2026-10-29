@@ -471,5 +471,39 @@
         "Ahoy"
       ]
     }
+  },
+  {
+    "id": "tech-terms",
+    "source": "technical dictation coverage (SL-75)",
+    "mode": "default",
+    "input": "before you open the pull request do a git rebase on main then run npm install and npm test if the api returns a 500 error check the json payload and the env file in the repo",
+    "checks": {
+      "contains": [
+        "git rebase",
+        "npm install",
+        "npm test",
+        "API",
+        "500",
+        "JSON"
+      ],
+      "not_contains": [
+        "five hundred",
+        "Jason"
+      ]
+    }
+  },
+  {
+    "id": "deploy-steps",
+    "source": "technical dictation coverage (SL-75)",
+    "mode": "notes",
+    "input": "steps to deploy the api first pull the latest changes from github second run docker compose build third run the database migrations and fourth restart the server on aws",
+    "checks": {
+      "min_list_items": 4,
+      "contains": [
+        "GitHub",
+        "docker compose build",
+        "AWS"
+      ]
+    }
   }
 ]
