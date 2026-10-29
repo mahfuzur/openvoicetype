@@ -17,6 +17,9 @@ brew install cmake sox whisper-cpp shellcheck
 builds (`scripts/build-deps.sh`: pinned whisper.cpp and llama.cpp tags, built once and cached in `app/build/deps/`) into
 the app. Rebuild after changing the script or prompts. `BUNDLE_DEPS=off` skips the helpers, and the script then uses Homebrew's.
 
+If something doesn't work (permissions, no audio, Claude signed out, the cleanup failing), see
+[Troubleshooting](docs/GUIDE.md#troubleshooting) in the Guide, and the log in `~/Library/Logs/voice-to-text/dictate.log`.
+
 The app icon, the DMG background and the menu-bar icon are original artwork drawn in code. How they're built, the
 colours, and how to change and regenerate them are in [docs/ARTWORK.md](docs/ARTWORK.md).
 
