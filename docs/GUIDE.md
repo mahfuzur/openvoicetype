@@ -159,12 +159,12 @@ hotkey ─► note where the text should go (app, window, mode)
 | "Copied: you switched to …" | Focus moved while the text was being prepared. Press ⌘V where you want it. |
 | "Copied. Press ⌘V", or Accessibility is switched on but Settings says it's needed | The switch belongs to an older copy with a different signature (turning it off and on doesn't help). **Settings → General → Permissions → Reset…**, then switch OpenVoiceType on in the list that opens. |
 | "Pasted Whisper's text: the cleanup dropped …" | The meaning guard caught a missing number or "not". ⌃⌥Z swaps to the cleaned text if it was right. |
-| "Claude limit reached · resets …" | Your Claude plan's usage limit. S1-mini cleans up until then if it's installed, or pick another engine. |
+| "Claude limit reached, resets …" | You've hit your Claude plan's usage limit. Until it resets, the offline fallback (Apple Intelligence or S1-mini, in **Settings → Cleanup**) cleans up if it's on; or pick another engine. |
 | "Claude isn't signed in" | **Settings → Cleanup → Sign In…** |
 | "Claude Code changed how scripts sign in" | `claude -p` refused your login while `claude auth status` says you're signed in. Claude Code has probably changed its print-mode defaults: update OpenVoiceType, and check the log. |
-| "No speech detected" every time | Microphone access is missing, or the wrong mic is selected. Try **Microphone ▸ Test Microphone…**. |
-| Bluetooth mic says "No audio from …" | Pick the built-in mic under **Microphone**, or reconnect the earbuds. |
-| "Pasted without cleanup" | The engine failed and S1-mini isn't installed. **Settings → Cleanup** has a **Test Cleanup** button that says why. |
-| The first dictation after installing or updating is slow | The app prepares the speech engine for your Mac once (10–20 s) in the background after launch. |
+| "No speech detected" every time | Microphone access is missing, or the wrong mic is selected. Try Menu → **Microphone** → **Test Microphone…**. |
+| Bluetooth mic says "No audio from …" | Pick the built-in mic under Menu → **Microphone**, or reconnect the earbuds. |
+| "Pasted without cleanup" | The engine failed and no offline fallback (Apple Intelligence or S1-mini) is on. The **Test Cleanup** button in **Settings → Cleanup** says why. |
+| The first dictation after installing or updating is slow | After an install or update, the app prepares its speech and offline cleanup engines for your Mac once (10–20 s), in the background. |
 | Came from **Voice to Text** 0.1.x, and the hotkey or pasting doesn't work | The app was renamed, which macOS treats as a new app. Grant **Microphone** and **Accessibility** again, and quit the old app if it's still in the menu bar. |
 | Something else | Check `~/Library/Logs/voice-to-text/dictate.log`, and open an issue. |
